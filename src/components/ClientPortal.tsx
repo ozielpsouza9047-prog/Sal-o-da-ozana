@@ -129,6 +129,7 @@ export const ClientPortal: React.FC<ClientPortalProps> = ({
   const [showWaitlistForm, setShowWaitlistForm] = useState<boolean>(false);
   const [waitlistPeriod, setWaitlistPeriod] =
     useState<WaitlistEntry['preferredPeriod']>('Qualquer Horário');
+  const [waitlistPreferredTimes, setWaitlistPreferredTimes] = useState<string>('10:00, 14:00');
   const [waitlistNotes, setWaitlistNotes] = useState<string>('');
   const [isWaitlistSubmitting, setIsWaitlistSubmitting] = useState<boolean>(false);
 
@@ -576,11 +577,16 @@ export const ClientPortal: React.FC<ClientPortalProps> = ({
     }
     setIsWaitlistSubmitting(true);
     try {
+      const parsedTimes = waitlistPreferredTimes
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean);
       const res = await clientApiRequest<WaitlistEntry>('/api/client-portal/waitlist', 'POST', {
         serviceId: selectedServiceId,
         professionalId: selectedProfId,
         desiredDate: selectedDate,
         preferredPeriod: waitlistPeriod,
+        preferredTimes: parsedTimes,
         notes: waitlistNotes,
       });
       if (res) {
@@ -589,7 +595,7 @@ export const ClientPortal: React.FC<ClientPortalProps> = ({
           'Solicitação Registrada na Fila de Espera',
           `Avisaremos prioritariamente caso surja vaga em ${formatDateBR(res.desiredDate)} (${
             res.preferredPeriod
-          }).`
+          }${res.preferredTimes?.length ? ` · ${res.preferredTimes.join(', ')}` : ''}).`
         );
         setShowWaitlistForm(false);
         setWaitlistNotes('');
@@ -720,8 +726,11 @@ export const ClientPortal: React.FC<ClientPortalProps> = ({
   const activeAppointmentsList = useMemo(() => {
     return myAppointments.filter((a) =>
       aptHistoryFilter === 'upcoming'
-        ? a.status === 'scheduled' || a.status === 'confirmed' || a.status === 'in_progress'
-        : a.status === 'completed' || a.status === 'cancelled'
+        ? a.status === 'requested' ||
+          a.status === 'scheduled' ||
+          a.status === 'confirmed' ||
+          a.status === 'in_progress'
+        : a.status === 'completed' || a.status === 'cancelled' || a.status === 'no_show'
     );
   }, [myAppointments, aptHistoryFilter]);
 
@@ -1476,7 +1485,7 @@ export const ClientPortal: React.FC<ClientPortalProps> = ({
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div>
                           <label className="block text-[11px] font-medium text-zinc-700 mb-1">
                             Período de Preferência
@@ -1498,13 +1507,25 @@ export const ClientPortal: React.FC<ClientPortalProps> = ({
                         </div>
                         <div>
                           <label className="block text-[11px] font-medium text-zinc-700 mb-1">
+                            Horários Preferidos (Ex.: 10:00, 14:00)
+                          </label>
+                          <input
+                            type="text"
+                            value={waitlistPreferredTimes}
+                            onChange={(e) => setWaitlistPreferredTimes(e.target.value)}
+                            placeholder="10:00, 14:00, 16:30"
+                            className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg font-mono-num"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-medium text-zinc-700 mb-1">
                             Observação (Opcional)
                           </label>
                           <input
                             type="text"
                             value={waitlistNotes}
                             onChange={(e) => setWaitlistNotes(e.target.value)}
-                            placeholder="Ex.: Posso chegar em 20 minutos se surgir vaga"
+                            placeholder="Ex.: Posso chegar em 20 min"
                             className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg"
                           />
                         </div>
@@ -1776,6 +1797,7 @@ export const ClientPortal: React.FC<ClientPortalProps> = ({
                       {
                         myAppointments.filter(
                           (a) =>
+                            a.status === 'requested' ||
                             a.status === 'scheduled' ||
                             a.status === 'confirmed' ||
                             a.status === 'in_progress'
@@ -1795,7 +1817,10 @@ export const ClientPortal: React.FC<ClientPortalProps> = ({
                       Concluídos & Cancelados (
                       {
                         myAppointments.filter(
-                          (a) => a.status === 'completed' || a.status === 'cancelled'
+                          (a) =>
+                            a.status === 'completed' ||
+                            a.status === 'cancelled' ||
+                            a.status === 'no_show'
                         ).length
                       }
                       )
@@ -1829,35 +1854,39 @@ export const ClientPortal: React.FC<ClientPortalProps> = ({
                   <div className="space-y-4">
                     {activeAppointmentsList.map((apt) => {
                       const canModify =
-                        apt.status === 'scheduled' || apt.status === 'confirmed';
+                        apt.status === 'requested' ||
+                        apt.status === 'scheduled' ||
+                        apt.status === 'confirmed';
                       return (
                         <div
                           key={apt.id}
-                          className="bg-white border border-zinc-200/80 rounded-xl p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                          className="bg-white border border-zinc-200/80 rounded-xl p-5 sm:p-6 flex flex-col sm:flex-row sm:items-start justify-between gap-4"
                         >
-                          <div className="space-y-1.5">
+                          <div className="space-y-1.5 flex-1">
                             <div className="flex flex-wrap items-center gap-2 text-xs">
                               <span className="font-mono-num font-semibold text-zinc-900">
                                 {formatDateBR(apt.date)} · {apt.startTime} às {apt.endTime}
                               </span>
                               <span className="text-zinc-300">·</span>
                               <span
-                                className={`font-semibold ${
+                                className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${
                                   apt.status === 'completed'
-                                    ? 'text-emerald-700'
+                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
                                     : apt.status === 'cancelled'
-                                    ? 'text-red-600'
+                                    ? 'bg-red-50 text-red-800 border-red-200'
+                                    : apt.status === 'in_progress'
+                                    ? 'bg-amber-100 text-amber-950 border-amber-300'
                                     : apt.status === 'confirmed'
-                                    ? 'text-amber-800'
-                                    : 'text-zinc-800'
+                                    ? 'bg-blue-50 text-blue-800 border-blue-200'
+                                    : 'bg-zinc-100 text-zinc-800 border-zinc-300'
                                 }`}
                               >
-                                {apt.status === 'scheduled'
-                                  ? 'Agendado'
+                                {apt.status === 'requested' || apt.status === 'scheduled'
+                                  ? 'Solicitado'
                                   : apt.status === 'confirmed'
                                   ? 'Confirmado'
                                   : apt.status === 'in_progress'
-                                  ? 'Em Atendimento'
+                                  ? 'Em Andamento'
                                   : apt.status === 'completed'
                                   ? 'Concluído'
                                   : 'Cancelado'}
@@ -1878,6 +1907,28 @@ export const ClientPortal: React.FC<ClientPortalProps> = ({
                             {apt.notes && (
                               <p className="text-[11px] text-zinc-500 pt-1">{apt.notes}</p>
                             )}
+
+                            {apt.cancellationReason && apt.status === 'cancelled' && (
+                              <p className="text-[11px] text-red-700 font-medium pt-1">
+                                Motivo do cancelamento: {apt.cancellationReason}
+                              </p>
+                            )}
+
+                            {Array.isArray(apt.history) && apt.history.length > 0 && (
+                              <div className="pt-2 mt-2 border-t border-zinc-100 space-y-1">
+                                <span className="text-[10px] font-mono-num uppercase tracking-wider text-zinc-400 font-semibold block">
+                                  Histórico de Alterações ({apt.history.length})
+                                </span>
+                                {apt.history.slice(-3).map((h) => (
+                                  <p key={h.id} className="text-[11px] text-zinc-500">
+                                    <span className="font-mono-num text-zinc-400">
+                                      [{h.timestamp}]
+                                    </span>{' '}
+                                    {h.reason || h.action}
+                                  </p>
+                                ))}
+                              </div>
+                            )}
                           </div>
 
                           {canModify && (
@@ -1887,7 +1938,7 @@ export const ClientPortal: React.FC<ClientPortalProps> = ({
                                 onClick={() => openRescheduleModal(apt)}
                                 className="px-3.5 py-2 text-xs font-medium text-zinc-900 bg-zinc-100 hover:bg-zinc-200 rounded-lg transition-colors cursor-pointer"
                               >
-                                Reagendar
+                                Remarcar
                               </button>
                               <button
                                 type="button"
@@ -1911,7 +1962,7 @@ export const ClientPortal: React.FC<ClientPortalProps> = ({
                       Minhas Solicitações na Fila de Espera ({myWaitlist.length})
                     </h2>
                     <p className="text-xs text-zinc-500">
-                      Pedidos de encaixe caso surjam desistências na agenda
+                      Pedidos de encaixe com serviço, profissional e horários preferidos (atualizados automaticamente quando há desistência)
                     </p>
                   </div>
 
@@ -1924,39 +1975,70 @@ export const ClientPortal: React.FC<ClientPortalProps> = ({
                       {myWaitlist.map((w) => (
                         <div
                           key={w.id}
-                          className="bg-white border border-zinc-200/80 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                          className={`bg-white border rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs ${
+                            w.status === 'notified'
+                              ? 'border-emerald-400 bg-emerald-50/40'
+                              : 'border-zinc-200/80'
+                          }`}
                         >
                           <div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                               <span className="font-semibold text-zinc-900">{w.serviceName}</span>
                               <span className="text-zinc-300">·</span>
                               <span className="font-mono-num text-amber-900 font-medium">
                                 Data desejada: {formatDateBR(w.desiredDate)} ({w.preferredPeriod})
                               </span>
+                              {w.preferredTimes && w.preferredTimes.length > 0 && (
+                                <span className="px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-900 font-mono-num text-[11px]">
+                                  Horários: {w.preferredTimes.join(', ')}
+                                </span>
+                              )}
                             </div>
                             <p className="text-zinc-500 mt-1">
                               Especialista: {w.professionalName} · Status:{' '}
-                              <strong className="text-zinc-800">
+                              <strong
+                                className={
+                                  w.status === 'notified'
+                                    ? 'text-emerald-800'
+                                    : 'text-zinc-800'
+                                }
+                              >
                                 {w.status === 'waiting'
                                   ? 'Aguardando Vaga'
                                   : w.status === 'notified'
-                                  ? 'Vaga Notificada'
+                                  ? 'Vaga Liberada & Notificada!'
                                   : w.status === 'booked'
                                   ? 'Convertido em Agendamento'
                                   : 'Encerrado'}
                               </strong>
                             </p>
                           </div>
-                          {w.status === 'waiting' && (
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveWaitlist(w.id)}
-                              className="px-3 py-1.5 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 rounded-lg inline-flex items-center gap-1 self-start sm:self-center cursor-pointer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span>Remover da Fila</span>
-                            </button>
-                          )}
+                          <div className="flex items-center gap-2 self-start sm:self-center">
+                            {w.status === 'notified' && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (w.serviceId) setSelectedServiceId(w.serviceId);
+                                  if (w.professionalId) setSelectedProfId(w.professionalId);
+                                  setSelectedDate(w.desiredDate);
+                                  setActiveTab('book');
+                                }}
+                                className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-600 rounded-lg cursor-pointer"
+                              >
+                                Reservar Vaga Liberada
+                              </button>
+                            )}
+                            {(w.status === 'waiting' || w.status === 'notified') && (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveWaitlist(w.id)}
+                                className="px-3 py-1.5 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 rounded-lg inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>Remover da Fila</span>
+                              </button>
+                            )}
+                          </div>
                         </div>
                       ))}
                     </div>

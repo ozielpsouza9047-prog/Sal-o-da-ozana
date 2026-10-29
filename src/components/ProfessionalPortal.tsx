@@ -135,18 +135,30 @@ export const ProfessionalPortal: React.FC<ProfessionalPortalProps> = ({
 
   // Workspace navigation state
   const [activeTab, setActiveTab] = useState<ProfTab>('today');
+  const [calendarMode, setCalendarMode] = useState<'day' | 'week' | 'month'>('day');
   const [selectedDate, setSelectedDate] = useState<string>(
     () => new Date().toISOString().split('T')[0]
   );
   const [searchQuery, setSearchQuery] = useState('');
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
-  // Selected Appointment for Dossier & Reference Photos Modal
+  // Real available slots explorer for the logged-in professional
+  const [profServiceFilterId, setProfServiceFilterId] = useState<string>('');
+  const [profAvailableSlots, setProfAvailableSlots] = useState<Array<{ startTime: string; endTime: string }>>([]);
+  const [profIsWorkingDay, setProfIsWorkingDay] = useState<boolean>(true);
+  const [profAvailabilityReason, setProfAvailabilityReason] = useState<string>('');
+
+  // Selected Appointment for Dossier, Reschedule, Cancel & Reference Photos Modal
   const [selectedAptId, setSelectedAptId] = useState<string | null>(null);
   const [technicalNotesDraft, setTechnicalNotesDraft] = useState('');
   const [customPhotoUrl, setCustomPhotoUrl] = useState('');
   const [isUpdatingApt, setIsUpdatingApt] = useState(false);
   const [zoomPhotoUrl, setZoomPhotoUrl] = useState<string | null>(null);
+  const [rescheduleDateDraft, setRescheduleDateDraft] = useState('');
+  const [rescheduleTimeDraft, setRescheduleTimeDraft] = useState('');
+  const [cancelReasonDraft, setCancelReasonDraft] = useState('');
+  const [showRescheduleBox, setShowRescheduleBox] = useState(false);
+  const [showCancelBox, setShowCancelBox] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const todayIso = useMemo(() => new Date().toISOString().split('T')[0], []);
@@ -163,6 +175,20 @@ export const ProfessionalPortal: React.FC<ProfessionalPortalProps> = ({
   }, [db, currentUser]);
 
   // Strict RBAC scope filter: only appointments belonging to this professional
+  function getWeekRange(isoDate: string): { start: string; end: string } {
+    const d = new Date(`${isoDate}T12:00:00Z`);
+    const day = d.getUTCDay();
+    const diffToMonday = day === 0 ? -6 : 1 - day;
+    const monday = new Date(d);
+    monday.setUTCDate(d.getUTCDate() + diffToMonday);
+    const sunday = new Date(monday);
+    sunday.setUTCDate(monday.getUTCDate() + 6);
+    return {
+      start: monday.toISOString().split('T')[0],
+      end: sunday.toISOString().split('T')[0],
+    };
+  }
+
   const myAppointments = useMemo(() => {
     if (!db || !currentUser) return [];
     if (linkedProfessional) {
@@ -173,13 +199,47 @@ export const ProfessionalPortal: React.FC<ProfessionalPortalProps> = ({
     return [];
   }, [db, currentUser, linkedProfessional]);
 
-  const todayAppointments = useMemo(
-    () =>
-      myAppointments
-        .filter((a) => a.date === selectedDate && a.status !== 'cancelled')
-        .sort((a, b) => a.startTime.localeCompare(b.startTime)),
-    [myAppointments, selectedDate]
-  );
+  // Fetch real available slots for this professional on selectedDate
+  React.useEffect(() => {
+    if (!linkedProfessional || !db) return;
+    const srvId = profServiceFilterId || db.services.find((s) => s.status === 'active')?.id || '';
+    if (!srvId || !selectedDate) return;
+    if (!profServiceFilterId && srvId) {
+      setProfServiceFilterId(srvId);
+    }
+    let active = true;
+    fetch(
+      `/api/public/availability?professionalId=${encodeURIComponent(
+        linkedProfessional.id
+      )}&serviceId=${encodeURIComponent(srvId)}&date=${encodeURIComponent(selectedDate)}`
+    )
+      .then((r) => r.json())
+      .then((data) => {
+        if (!active) return;
+        setProfAvailableSlots(Array.isArray(data.availableSlots) ? data.availableSlots : []);
+        setProfIsWorkingDay(Boolean(data.isWorkingDay));
+        setProfAvailabilityReason(data.reason || '');
+      })
+      .catch(() => {
+        if (active) setProfAvailableSlots([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [linkedProfessional, db, profServiceFilterId, selectedDate, myAppointments.length]);
+
+  const todayAppointments = useMemo(() => {
+    const weekBounds = getWeekRange(selectedDate);
+    const monthPrefix = selectedDate.slice(0, 7);
+    return myAppointments
+      .filter((a) => {
+        if (a.status === 'cancelled') return false;
+        if (calendarMode === 'day') return a.date === selectedDate;
+        if (calendarMode === 'week') return a.date >= weekBounds.start && a.date <= weekBounds.end;
+        return a.date.startsWith(monthPrefix);
+      })
+      .sort((a, b) => `${a.date}T${a.startTime}`.localeCompare(`${b.date}T${b.startTime}`));
+  }, [myAppointments, selectedDate, calendarMode]);
 
   const inProgressAppointments = useMemo(
     () => myAppointments.filter((a) => a.status === 'in_progress'),
@@ -191,7 +251,7 @@ export const ProfessionalPortal: React.FC<ProfessionalPortalProps> = ({
       myAppointments
         .filter(
           (a) =>
-            (a.status === 'scheduled' || a.status === 'confirmed') &&
+            (a.status === 'requested' || a.status === 'scheduled' || a.status === 'confirmed') &&
             a.date >= todayIso
         )
         .sort((a, b) => `${a.date}T${a.startTime}`.localeCompare(`${b.date}T${b.startTime}`)),
@@ -273,11 +333,17 @@ export const ProfessionalPortal: React.FC<ProfessionalPortalProps> = ({
     setSelectedAptId(apt.id);
     setTechnicalNotesDraft(apt.notes || '');
     setCustomPhotoUrl('');
+    setRescheduleDateDraft(apt.date);
+    setRescheduleTimeDraft(apt.startTime);
+    setCancelReasonDraft('');
+    setShowRescheduleBox(false);
+    setShowCancelBox(false);
   };
 
   const handleUpdateStatus = async (
     apt: Appointment,
-    newStatus: Appointment['status']
+    newStatus: Appointment['status'],
+    extraPayload?: Record<string, any>
   ) => {
     setIsUpdatingApt(true);
     try {
@@ -287,11 +353,13 @@ export const ProfessionalPortal: React.FC<ProfessionalPortalProps> = ({
         {
           status: newStatus,
           notes: selectedAptId === apt.id ? technicalNotesDraft : apt.notes,
+          ...extraPayload,
         }
       );
       if (updated) {
         const statusLabels: Record<Appointment['status'], string> = {
-          scheduled: 'Agendado',
+          requested: 'Solicitado',
+          scheduled: 'Solicitado / Agendado',
           confirmed: 'Confirmado',
           in_progress: 'Em Andamento na Cadeira',
           completed: 'Concluído',
@@ -303,6 +371,35 @@ export const ProfessionalPortal: React.FC<ProfessionalPortalProps> = ({
           'Status do Atendimento Atualizado',
           `${apt.clientName} · ${apt.serviceName} marcado como "${statusLabels[newStatus]}".`
         );
+        setShowCancelBox(false);
+        await refreshData();
+      }
+    } finally {
+      setIsUpdatingApt(false);
+    }
+  };
+
+  const handleRescheduleAppointment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedApt || !rescheduleDateDraft || !rescheduleTimeDraft) return;
+    setIsUpdatingApt(true);
+    try {
+      const updated = await apiRequest<Appointment>(
+        `/api/appointments/${selectedApt.id}`,
+        'PUT',
+        {
+          date: rescheduleDateDraft,
+          startTime: rescheduleTimeDraft,
+          reason: 'Remarcado pelo especialista na bancada técnica',
+        }
+      );
+      if (updated) {
+        notify(
+          'success',
+          'Atendimento Remarcado',
+          `Novo horário definido para ${formatDateBR(updated.date)} às ${updated.startTime}.`
+        );
+        setShowRescheduleBox(false);
         await refreshData();
       }
     } finally {
@@ -657,8 +754,12 @@ export const ProfessionalPortal: React.FC<ProfessionalPortalProps> = ({
       Appointment['status'],
       { label: string; classes: string }
     > = {
+      requested: {
+        label: 'Solicitado',
+        classes: 'bg-zinc-100 text-zinc-800 border-zinc-300',
+      },
       scheduled: {
-        label: 'Agendado',
+        label: 'Solicitado',
         classes: 'bg-zinc-100 text-zinc-700 border-zinc-200',
       },
       confirmed: {
@@ -666,7 +767,7 @@ export const ProfessionalPortal: React.FC<ProfessionalPortalProps> = ({
         classes: 'bg-blue-50 text-blue-800 border-blue-200',
       },
       in_progress: {
-        label: 'Em Atendimento',
+        label: 'Em Andamento',
         classes: 'bg-amber-100 text-amber-950 border-amber-300',
       },
       completed: {
@@ -1046,48 +1147,123 @@ export const ProfessionalPortal: React.FC<ProfessionalPortalProps> = ({
           </div>
         </section>
 
-        {/* Filter Bar: Date Selector (for Agenda do Dia) & Search */}
-        <section className="bg-white border border-zinc-200/80 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <h2 className="font-serif-display text-xl font-semibold text-zinc-900">
-              {activeTab === 'today' && 'Agenda do Dia'}
-              {activeTab === 'in_progress' && 'Atendimentos em Andamento na Cadeira'}
-              {activeTab === 'upcoming' && 'Próximos Atendimentos Confirmados'}
-              {activeTab === 'cancelled' && 'Registro de Cancelamentos'}
-              {activeTab === 'history' && 'Histórico de Atendimentos & Comissões'}
-            </h2>
+        {/* Filter Bar: Date Selector, Daily/Weekly/Monthly Switcher & Search */}
+        <section className="bg-white border border-zinc-200/80 rounded-xl p-4 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <h2 className="font-serif-display text-xl font-semibold text-zinc-900">
+                {activeTab === 'today' &&
+                  (calendarMode === 'day'
+                    ? 'Agenda Diária'
+                    : calendarMode === 'week'
+                    ? 'Agenda Semanal'
+                    : 'Agenda Mensal')}
+                {activeTab === 'in_progress' && 'Atendimentos em Andamento na Cadeira'}
+                {activeTab === 'upcoming' && 'Próximos Atendimentos (Solicitados & Confirmados)'}
+                {activeTab === 'cancelled' && 'Registro de Cancelamentos'}
+                {activeTab === 'history' && 'Histórico de Atendimentos & Comissões'}
+              </h2>
 
-            {activeTab === 'today' && (
-              <div className="flex items-center gap-2">
-                <input
-                  type="date"
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                  className="px-3 py-1.5 text-xs font-mono-num bg-zinc-50 border border-zinc-300 rounded-lg"
-                />
-                {selectedDate !== todayIso && (
-                  <button
-                    type="button"
-                    onClick={() => setSelectedDate(todayIso)}
-                    className="px-2.5 py-1.5 text-xs font-medium text-amber-900 bg-amber-50 border border-amber-200 rounded-lg cursor-pointer"
-                  >
-                    Hoje
-                  </button>
-                )}
+              {activeTab === 'today' && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="inline-flex rounded-lg border border-zinc-200 bg-zinc-50 p-0.5">
+                    {(
+                      [
+                        { id: 'day', label: 'Diária' },
+                        { id: 'week', label: 'Semanal' },
+                        { id: 'month', label: 'Mensal' },
+                      ] as const
+                    ).map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => setCalendarMode(m.id)}
+                        className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                          calendarMode === m.id
+                            ? 'bg-zinc-900 text-white font-semibold'
+                            : 'text-zinc-600 hover:text-zinc-900'
+                        }`}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={(e) => setSelectedDate(e.target.value)}
+                    className="px-3 py-1.5 text-xs font-mono-num bg-zinc-50 border border-zinc-300 rounded-lg"
+                  />
+                  {selectedDate !== todayIso && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDate(todayIso)}
+                      className="px-2.5 py-1.5 text-xs font-medium text-amber-900 bg-amber-50 border border-amber-200 rounded-lg cursor-pointer"
+                    >
+                      Hoje
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="relative w-full sm:w-72">
+              <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Buscar cliente, serviço ou fórmula..."
+                className="w-full pl-9 pr-3 py-2 text-xs bg-zinc-50 border border-zinc-200 rounded-lg focus:outline-none focus:border-zinc-900"
+              />
+            </div>
+          </div>
+
+          {/* Real Available Slots Strip for the Specialist */}
+          {activeTab === 'today' && db && (
+            <div className="pt-3 border-t border-zinc-100 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-mono-num uppercase tracking-wider text-amber-900 font-semibold">
+                  Minhas Vagas Reais Livres ({formatDateBR(selectedDate)}):
+                </span>
+                <select
+                  value={profServiceFilterId}
+                  onChange={(e) => setProfServiceFilterId(e.target.value)}
+                  className="px-2.5 py-1 text-xs bg-zinc-50 border border-zinc-200 rounded-lg"
+                >
+                  {db.services
+                    .filter((s) => s.status === 'active')
+                    .map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({s.durationMinutes} min)
+                      </option>
+                    ))}
+                </select>
               </div>
-            )}
-          </div>
 
-          <div className="relative w-full sm:w-72">
-            <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar cliente, serviço ou fórmula..."
-              className="w-full pl-9 pr-3 py-2 text-xs bg-zinc-50 border border-zinc-200 rounded-lg focus:outline-none focus:border-zinc-900"
-            />
-          </div>
+              {!profIsWorkingDay ? (
+                <span className="text-xs text-amber-800 font-medium">
+                  {profAvailabilityReason || 'Fora da escala de atendimento nesta data.'}
+                </span>
+              ) : profAvailableSlots.length === 0 ? (
+                <span className="text-xs text-amber-800 font-medium">
+                  Nenhum horário livre para a duração deste serviço em {formatDateBR(selectedDate)}.
+                </span>
+              ) : (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {profAvailableSlots.map((slot) => (
+                    <span
+                      key={slot.startTime}
+                      className="px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-900 font-mono-num text-[11px] font-semibold"
+                    >
+                      {slot.startTime}–{slot.endTime}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </section>
 
         {/* Appointments List */}
@@ -1236,8 +1412,21 @@ export const ProfessionalPortal: React.FC<ProfessionalPortalProps> = ({
                       <span>Ficha do Cliente & Fotos ({refPhotos.length})</span>
                     </button>
 
-                    <div className="flex items-center gap-2">
-                      {(apt.status === 'scheduled' || apt.status === 'confirmed') && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {(apt.status === 'requested' || apt.status === 'scheduled') && (
+                        <button
+                          type="button"
+                          disabled={isUpdatingApt}
+                          onClick={() => handleUpdateStatus(apt, 'confirmed')}
+                          className="px-2.5 py-1.5 text-xs font-semibold text-blue-900 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors cursor-pointer"
+                        >
+                          Confirmar
+                        </button>
+                      )}
+
+                      {(apt.status === 'requested' ||
+                        apt.status === 'scheduled' ||
+                        apt.status === 'confirmed') && (
                         <button
                           type="button"
                           disabled={isUpdatingApt}
@@ -1433,8 +1622,20 @@ export const ProfessionalPortal: React.FC<ProfessionalPortalProps> = ({
 
               <div className="flex flex-col items-start sm:items-end gap-2">
                 {renderStatusBadge(selectedApt.status)}
-                <div className="flex items-center gap-1.5">
-                  {(selectedApt.status === 'scheduled' ||
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {(selectedApt.status === 'requested' ||
+                    selectedApt.status === 'scheduled') && (
+                    <button
+                      type="button"
+                      disabled={isUpdatingApt}
+                      onClick={() => handleUpdateStatus(selectedApt, 'confirmed')}
+                      className="px-2.5 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-lg cursor-pointer"
+                    >
+                      Confirmar
+                    </button>
+                  )}
+                  {(selectedApt.status === 'requested' ||
+                    selectedApt.status === 'scheduled' ||
                     selectedApt.status === 'confirmed') && (
                     <button
                       type="button"
@@ -1455,9 +1656,131 @@ export const ProfessionalPortal: React.FC<ProfessionalPortalProps> = ({
                       Concluir Atendimento
                     </button>
                   )}
+                  {selectedApt.status !== 'completed' &&
+                    selectedApt.status !== 'cancelled' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowRescheduleBox(!showRescheduleBox);
+                            setShowCancelBox(false);
+                          }}
+                          className="px-2.5 py-1.5 text-xs font-medium text-zinc-200 bg-zinc-800 hover:bg-zinc-700 rounded-lg cursor-pointer"
+                        >
+                          Remarcar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowCancelBox(!showCancelBox);
+                            setShowRescheduleBox(false);
+                          }}
+                          className="px-2.5 py-1.5 text-xs font-medium text-red-300 bg-red-950/60 hover:bg-red-900/70 border border-red-800/50 rounded-lg cursor-pointer"
+                        >
+                          Cancelar
+                        </button>
+                      </>
+                    )}
                 </div>
               </div>
             </div>
+
+            {/* Inline Reschedule Box in Dossier Modal */}
+            {showRescheduleBox && (
+              <form
+                onSubmit={handleRescheduleAppointment}
+                className="p-4 rounded-xl bg-amber-50/70 border border-amber-200 space-y-3"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-amber-950">
+                    Remarcar Atendimento (Validação de Conflito e Escala no Servidor)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowRescheduleBox(false)}
+                    className="text-xs text-zinc-500 hover:text-zinc-800 cursor-pointer"
+                  >
+                    Fechar
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-medium text-zinc-700 mb-1">
+                      Nova Data
+                    </label>
+                    <input
+                      type="date"
+                      value={rescheduleDateDraft}
+                      onChange={(e) => setRescheduleDateDraft(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-zinc-300 rounded-lg font-mono-num"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-zinc-700 mb-1">
+                      Novo Horário
+                    </label>
+                    <input
+                      type="time"
+                      value={rescheduleTimeDraft}
+                      onChange={(e) => setRescheduleTimeDraft(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-zinc-300 rounded-lg font-mono-num"
+                      required
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <button
+                      type="submit"
+                      disabled={isUpdatingApt}
+                      className="w-full py-1.5 px-3 text-xs font-semibold text-white bg-zinc-900 hover:bg-zinc-800 rounded-lg cursor-pointer"
+                    >
+                      Confirmar Remarcação
+                    </button>
+                  </div>
+                </div>
+              </form>
+            )}
+
+            {/* Inline Cancel Box in Dossier Modal */}
+            {showCancelBox && (
+              <div className="p-4 rounded-xl bg-red-50 border border-red-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-red-950">
+                    Cancelar Atendimento (Libera vaga imediatamente e notifica fila de espera)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowCancelBox(false)}
+                    className="text-xs text-red-700 hover:underline cursor-pointer"
+                  >
+                    Fechar
+                  </button>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="text"
+                    value={cancelReasonDraft}
+                    onChange={(e) => setCancelReasonDraft(e.target.value)}
+                    placeholder="Informe o motivo do cancelamento para o histórico..."
+                    className="flex-1 px-3 py-1.5 text-xs bg-white border border-red-300 rounded-lg"
+                  />
+                  <button
+                    type="button"
+                    disabled={isUpdatingApt}
+                    onClick={() =>
+                      handleUpdateStatus(selectedApt, 'cancelled', {
+                        cancellationReason:
+                          cancelReasonDraft.trim() ||
+                          'Cancelado pelo profissional na bancada',
+                      })
+                    }
+                    className="px-4 py-1.5 text-xs font-semibold text-white bg-red-700 hover:bg-red-600 rounded-lg cursor-pointer"
+                  >
+                    Confirmar Cancelamento
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Client Necessary Anamnesis & Restrictions Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1631,6 +1954,35 @@ export const ProfessionalPortal: React.FC<ProfessionalPortalProps> = ({
                 </button>
               </div>
             </form>
+
+            {/* Appointment Audit & Reschedule History */}
+            {Array.isArray(selectedApt.history) && selectedApt.history.length > 0 && (
+              <div className="space-y-2 pt-3 border-t border-zinc-200/80">
+                <h4 className="text-xs font-semibold text-zinc-900">
+                  Histórico de Alterações deste Agendamento ({selectedApt.history.length})
+                </h4>
+                <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                  {selectedApt.history.map((h) => (
+                    <div
+                      key={h.id}
+                      className="p-2.5 rounded-lg bg-zinc-50 border border-zinc-200/70 text-[11px] flex flex-col sm:flex-row sm:items-center justify-between gap-1"
+                    >
+                      <div>
+                        <span className="font-semibold text-zinc-900">{h.performedBy}</span>
+                        <span className="text-zinc-500"> · {h.reason || h.action}</span>
+                        {h.previousDate && h.newDate && (
+                          <span className="block font-mono-num text-amber-900">
+                            De {formatDateBR(h.previousDate)} ({h.previousStartTime}) para{' '}
+                            {formatDateBR(h.newDate)} ({h.newStartTime})
+                          </span>
+                        )}
+                      </div>
+                      <span className="font-mono-num text-zinc-400">{h.timestamp}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Previous Appointments of this Client with this Specialist */}
             {clientPreviousAppointments.length > 0 && (

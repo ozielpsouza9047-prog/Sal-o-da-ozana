@@ -17,6 +17,7 @@ import type {
   BannerSlide,
   WaitlistEntry,
   Client,
+  Appointment,
 } from './src/types';
 
 const PORT = 3000;
@@ -1147,9 +1148,46 @@ function ensureStorage(): { db: AppDatabase; credentials: Record<string, string>
     dbChanged = true;
   }
 
-  if (dbChanged) {
-    atomicWriteJson(DB_PATH, DB_BAK_PATH, db);
-  }
+    for (const apt of db.appointments) {
+      if (!Array.isArray(apt.history) || apt.history.length === 0) {
+        apt.history = [
+          {
+            id: `hst-init-${apt.id}`,
+            timestamp: apt.createdAt || new Date().toISOString(),
+            action: 'created',
+            newStatus: apt.status,
+            newDate: apt.date,
+            newStartTime: apt.startTime,
+            performedBy: 'Sistema / Recepção',
+          },
+        ];
+        dbChanged = true;
+      }
+    }
+
+    if (db.waitlist.length === 0) {
+      db.waitlist.push({
+        id: 'wlt-seed-1',
+        clientId: 'cli-2',
+        clientName: 'Carolina Mendes Fontes',
+        clientPhone: '(11) 98821-3390',
+        serviceId: 'srv-2',
+        serviceName: 'Corte Autoral & Escova Modelada',
+        professionalId: 'prf-1',
+        professionalName: 'Rafael Albuquerque',
+        desiredDate: todayStr,
+        preferredPeriod: 'Tarde',
+        preferredTimes: ['15:00', '16:00'],
+        notes: 'Deseja encaixe na parte da tarde caso abra vaga com Rafael.',
+        status: 'waiting',
+        createdAt: new Date(Date.now() - 3600000 * 3).toISOString(),
+      });
+      dbChanged = true;
+    }
+
+    if (dbChanged) {
+      atomicWriteJson(DB_PATH, DB_BAK_PATH, db);
+    }
 
   let credentials: Record<string, string>;
   if (!fs.existsSync(CREDENTIALS_PATH)) {
@@ -1933,7 +1971,220 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // --- AGENDA / APPOINTMENTS ---
+  // --- AGENDA / AVAILABILITY & APPOINTMENT ENGINE ---
+  function computeProfessionalAvailability(
+    date: string,
+    professionalId: string,
+    serviceId: string,
+    excludeAppointmentId?: string
+  ) {
+    const prof = db.professionals.find((p) => p.id === professionalId);
+    const srv = db.services.find((s) => s.id === serviceId);
+    if (!prof || !srv) {
+      return {
+        validEntities: false as const,
+        error: 'Especialista ou serviço selecionado não encontrado.',
+      };
+    }
+
+    if (prof.status !== 'active') {
+      return {
+        validEntities: true as const,
+        prof,
+        srv,
+        date,
+        dayLabel: '',
+        isWorkingDay: false,
+        reason: `O especialista ${prof.name} encontra-se indisponível (${prof.status === 'vacation' ? 'em férias' : 'inativo'}).`,
+        openTime: '09:00',
+        closeTime: '19:00',
+        startWindow: 540,
+        endWindow: 1140,
+        duration: srv.durationMinutes,
+        availableSlots: [] as { startTime: string; endTime: string }[],
+        occupiedIntervals: [] as { startTime: string; endTime: string; clientName?: string; serviceName?: string; status?: string }[],
+      };
+    }
+
+    const [yy, mm, dd] = String(date).split('-').map(Number);
+    const dateObj = new Date(yy, (mm || 1) - 1, dd || 1);
+    const dayLabel = WEEKDAY_MAP[dateObj.getDay()];
+
+    const match = (prof.workHours || '').match(/(\d{2}:\d{2}).*?(\d{2}:\d{2})/);
+    const openTime = match ? match[1] : db.settings.openingTime || '09:00';
+    const closeTime = match ? match[2] : db.settings.closingTime || '20:00';
+    const startWindow = timeToMinutes(openTime);
+    const endWindow = timeToMinutes(closeTime);
+    const step = Math.max(15, Number(db.settings.slotIntervalMinutes || 30));
+    const duration = srv.durationMinutes;
+
+    if (Array.isArray(prof.workDays) && prof.workDays.length > 0 && !prof.workDays.includes(dayLabel)) {
+      return {
+        validEntities: true as const,
+        prof,
+        srv,
+        date,
+        dayLabel,
+        isWorkingDay: false,
+        reason: `${prof.name} não realiza atendimentos às/aos ${dayLabel}s (Dias de atendimento: ${prof.workDays.join(', ')}).`,
+        openTime,
+        closeTime,
+        startWindow,
+        endWindow,
+        duration,
+        availableSlots: [] as { startTime: string; endTime: string }[],
+        occupiedIntervals: [] as { startTime: string; endTime: string; clientName?: string; serviceName?: string; status?: string }[],
+      };
+    }
+
+    const dayAppointments = db.appointments.filter(
+      (a) =>
+        a.professionalId === prof.id &&
+        a.date === date &&
+        a.status !== 'cancelled' &&
+        a.id !== excludeAppointmentId
+    );
+
+    const seenStartTimes = new Set<string>();
+    const availableSlots: { startTime: string; endTime: string }[] = [];
+
+    for (let t = startWindow; t + duration <= endWindow; t += step) {
+      const candidateStart = t;
+      const candidateEnd = t + duration;
+      const hasOverlap = dayAppointments.some((a) => {
+        const exStart = timeToMinutes(a.startTime);
+        const exEnd = timeToMinutes(a.endTime);
+        return candidateStart < exEnd && candidateEnd > exStart;
+      });
+      if (!hasOverlap) {
+        const sh = String(Math.floor(candidateStart / 60)).padStart(2, '0');
+        const sm = String(candidateStart % 60).padStart(2, '0');
+        const eh = String(Math.floor(candidateEnd / 60)).padStart(2, '0');
+        const em = String(candidateEnd % 60).padStart(2, '0');
+        const startStr = `${sh}:${sm}`;
+        if (!seenStartTimes.has(startStr)) {
+          seenStartTimes.add(startStr);
+          availableSlots.push({ startTime: startStr, endTime: `${eh}:${em}` });
+        }
+      }
+    }
+
+    return {
+      validEntities: true as const,
+      prof,
+      srv,
+      date,
+      dayLabel,
+      isWorkingDay: true,
+      openTime,
+      closeTime,
+      startWindow,
+      endWindow,
+      duration,
+      availableSlots,
+      occupiedIntervals: dayAppointments.map((a) => ({
+        startTime: a.startTime,
+        endTime: a.endTime,
+        clientName: a.clientName,
+        serviceName: a.serviceName,
+        status: a.status,
+      })),
+    };
+  }
+
+  function validateScheduleWindow(
+    professionalId: string,
+    serviceId: string,
+    date: string,
+    startTime: string,
+    excludeAppointmentId?: string
+  ): { valid: boolean; httpStatus?: number; error?: string; endTime?: string } {
+    const [hh, mm] = String(startTime || '').split(':').map(Number);
+    if (isNaN(hh) || isNaN(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+      return { valid: false, httpStatus: 400, error: 'Formato de horário inválido (use HH:mm).' };
+    }
+
+    const avail = computeProfessionalAvailability(date, professionalId, serviceId, excludeAppointmentId);
+    if (!avail.validEntities) {
+      return { valid: false, httpStatus: 400, error: avail.error };
+    }
+
+    if (!avail.isWorkingDay) {
+      return {
+        valid: false,
+        httpStatus: 400,
+        error: avail.reason || 'O profissional selecionado não atende nesta data.',
+      };
+    }
+
+    const newStartMin = hh * 60 + mm;
+    const newEndMin = newStartMin + avail.duration;
+    const endH = String(Math.floor(newEndMin / 60) % 24).padStart(2, '0');
+    const endM = String(newEndMin % 60).padStart(2, '0');
+    const endTime = `${endH}:${endM}`;
+
+    if (newStartMin < avail.startWindow || newEndMin > avail.endWindow) {
+      return {
+        valid: false,
+        httpStatus: 400,
+        error: `Horário indisponível: o atendimento (${startTime} às ${endTime}) ultrapassa o expediente de ${avail.prof.name} (${avail.openTime} às ${avail.closeTime}).`,
+      };
+    }
+
+    const conflict = db.appointments.find((a) => {
+      if (
+        a.id === excludeAppointmentId ||
+        a.professionalId !== professionalId ||
+        a.date !== date ||
+        a.status === 'cancelled'
+      ) {
+        return false;
+      }
+      const existStart = timeToMinutes(a.startTime);
+      const existEnd = timeToMinutes(a.endTime);
+      return newStartMin < existEnd && newEndMin > existStart;
+    });
+
+    if (conflict) {
+      return {
+        valid: false,
+        httpStatus: 409,
+        error: `Conflito de agenda: ${avail.prof.name} já possui atendimento das ${conflict.startTime} às ${conflict.endTime} (${conflict.clientName}).`,
+      };
+    }
+
+    return { valid: true, endTime };
+  }
+
+  function notifyWaitlistOnSlotFreed(
+    freedDate: string,
+    freedStartTime: string,
+    freedEndTime: string,
+    profId: string,
+    profName: string
+  ) {
+    if (!Array.isArray(db.waitlist)) return;
+    const matchingWaitlist = db.waitlist.filter(
+      (w) =>
+        (w.status === 'waiting' || w.status === 'notified') &&
+        w.desiredDate === freedDate &&
+        (w.professionalId === profId || w.professionalId === 'any')
+    );
+
+    if (matchingWaitlist.length > 0) {
+      for (const w of matchingWaitlist) {
+        w.status = 'notified';
+      }
+      const clientNames = matchingWaitlist.map((w) => w.clientName).join(', ');
+      addNotification(
+        `Vaga Liberada na Agenda (${freedDate} às ${freedStartTime})`,
+        `O horário das ${freedStartTime} às ${freedEndTime} com ${profName} ficou disponível. Fila de Espera compatível: ${clientNames}.`,
+        'agenda',
+        'agenda'
+      );
+    }
+  }
+
   app.post('/api/appointments', requireAuth, requireModulePermission('agenda'), (req: AuthenticatedRequest, res: Response) => {
     const { clientId, professionalId, serviceId, date, startTime, notes, status, referencePhotos } = req.body;
     const currentUser = req.user!;
@@ -1972,33 +2223,15 @@ async function startServer() {
       return;
     }
 
-    // Calculate endTime
-    const [hh, mm] = startTime.split(':').map(Number);
-    if (isNaN(hh) || isNaN(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) {
-      res.status(400).json({ error: 'Formato de horário inválido (use HH:mm).' });
+    const scheduleCheck = validateScheduleWindow(professionalId, serviceId, date, startTime);
+    if (!scheduleCheck.valid) {
+      res.status(scheduleCheck.httpStatus || 400).json({ error: scheduleCheck.error });
       return;
     }
-    const newStartMin = hh * 60 + mm;
-    const newEndMin = newStartMin + srv.durationMinutes;
-    const endH = String(Math.floor(newEndMin / 60) % 24).padStart(2, '0');
-    const endM = String(newEndMin % 60).padStart(2, '0');
-    const endTime = `${endH}:${endM}`;
 
-    // Full time-window overlap check for same professional on same date
-    const conflict = db.appointments.find((a) => {
-      if (a.professionalId !== professionalId || a.date !== date || a.status === 'cancelled') {
-        return false;
-      }
-      const existStart = timeToMinutes(a.startTime);
-      const existEnd = timeToMinutes(a.endTime);
-      return newStartMin < existEnd && newEndMin > existStart;
-    });
-    if (conflict) {
-      res.status(409).json({
-        error: `Conflito de agenda: ${prof.name} já possui atendimento das ${conflict.startTime} às ${conflict.endTime} (${conflict.clientName}).`,
-      });
-      return;
-    }
+    const endTime = scheduleCheck.endTime!;
+    const initialStatus = status || 'requested';
+    const nowIso = new Date().toISOString();
 
     const apt = {
       id: `apt-${Date.now()}`,
@@ -2013,14 +2246,31 @@ async function startServer() {
       startTime,
       endTime,
       price: srv.price,
-      status: status || 'scheduled',
+      status: initialStatus,
       paymentStatus: 'pending' as const,
       notes: (notes || '').trim(),
       referencePhotos: photosCheck.sanitized || [],
-      createdAt: new Date().toISOString(),
+      history: [
+        {
+          id: `hst-${Date.now()}`,
+          timestamp: nowIso,
+          action: 'created' as const,
+          newStatus: initialStatus,
+          newDate: date,
+          newStartTime: startTime,
+          performedBy: `${currentUser.name} (${currentUser.role})`,
+        },
+      ],
+      createdAt: nowIso,
     };
 
     db.appointments.unshift(apt);
+    addNotification(
+      `Novo Agendamento Registrado: ${client.name}`,
+      `${client.name} agendou ${srv.name} com ${prof.name} em ${date} das ${startTime} às ${endTime} (Status: ${initialStatus}).`,
+      'agenda',
+      'agenda'
+    );
     saveDb(db);
     logAudit(
       req.user!,
@@ -2078,46 +2328,162 @@ async function startServer() {
     const targetStartTime = req.body.startTime || current.startTime;
     const targetServiceId = req.body.serviceId || current.serviceId;
     const targetStatus = req.body.status || current.status;
+    const reason = typeof req.body.reason === 'string' ? req.body.reason.trim() : undefined;
 
-    const srv = db.services.find((s) => s.id === targetServiceId);
-    const duration = srv ? srv.durationMinutes : 60;
-    const newStartMin = timeToMinutes(targetStartTime);
-    const newEndMin = newStartMin + duration;
-    const endH = String(Math.floor(newEndMin / 60) % 24).padStart(2, '0');
-    const endM = String(newEndMin % 60).padStart(2, '0');
-    const computedEndTime = req.body.startTime || req.body.serviceId ? `${endH}:${endM}` : current.endTime;
+    const isDateOrTimeChanged =
+      targetDate !== current.date ||
+      targetStartTime !== current.startTime ||
+      targetProfId !== current.professionalId ||
+      targetServiceId !== current.serviceId;
 
-    if (targetStatus !== 'cancelled') {
-      const conflict = db.appointments.find((a) => {
-        if (a.id === current.id || a.professionalId !== targetProfId || a.date !== targetDate || a.status === 'cancelled') {
-          return false;
-        }
-        const existStart = timeToMinutes(a.startTime);
-        const existEnd = timeToMinutes(a.endTime);
-        return newStartMin < existEnd && newEndMin > existStart;
+    const isCancelling = targetStatus === 'cancelled' && current.status !== 'cancelled';
+
+    // Validate salon modification rule if cancelling or rescheduling an already completed appointment
+    if ((isCancelling || isDateOrTimeChanged) && current.status === 'completed') {
+      res.status(400).json({
+        error: 'Não é permitido cancelar ou remarcar um atendimento que já foi concluído.',
       });
-      if (conflict) {
-        res.status(409).json({
-          error: `Conflito de agenda na edição: horário colide com atendimento das ${conflict.startTime} às ${conflict.endTime} (${conflict.clientName}).`,
-        });
-        return;
+      return;
+    }
+
+    let computedEndTime = current.endTime;
+    if (targetStatus !== 'cancelled') {
+      if (isDateOrTimeChanged || current.status === 'cancelled') {
+        const scheduleCheck = validateScheduleWindow(
+          targetProfId,
+          targetServiceId,
+          targetDate,
+          targetStartTime,
+          current.id
+        );
+        if (!scheduleCheck.valid) {
+          res.status(scheduleCheck.httpStatus || 400).json({ error: scheduleCheck.error });
+          return;
+        }
+        computedEndTime = scheduleCheck.endTime!;
+      } else {
+        const srv = db.services.find((s) => s.id === targetServiceId);
+        const duration = srv ? srv.durationMinutes : 60;
+        const newStartMin = timeToMinutes(targetStartTime);
+        const newEndMin = newStartMin + duration;
+        const endH = String(Math.floor(newEndMin / 60) % 24).padStart(2, '0');
+        const endM = String(newEndMin % 60).padStart(2, '0');
+        computedEndTime = `${endH}:${endM}`;
       }
     }
+
+    const prevDate = current.date;
+    const prevStartTime = current.startTime;
+    const prevEndTime = current.endTime;
+    const prevProfId = current.professionalId;
+    const prevProfName = current.professionalName;
+    const prevStatus = current.status;
+
+    const history = Array.isArray(current.history) ? [...current.history] : [];
+    const nowIso = new Date().toISOString();
+
+    if (isCancelling) {
+      history.unshift({
+        id: `hst-${Date.now()}-canc`,
+        timestamp: nowIso,
+        action: 'cancelled',
+        previousStatus: prevStatus,
+        newStatus: 'cancelled',
+        previousDate: prevDate,
+        previousStartTime: prevStartTime,
+        performedBy: `${currentUser.name} (${currentUser.role})`,
+        reason: reason || req.body.cancellationReason || 'Cancelado via painel operacional.',
+      });
+    } else if (isDateOrTimeChanged) {
+      history.unshift({
+        id: `hst-${Date.now()}-resch`,
+        timestamp: nowIso,
+        action: 'rescheduled',
+        previousStatus: prevStatus,
+        newStatus: targetStatus,
+        previousDate: prevDate,
+        previousStartTime: prevStartTime,
+        newDate: targetDate,
+        newStartTime: targetStartTime,
+        performedBy: `${currentUser.name} (${currentUser.role})`,
+        reason: reason || 'Remarcação de horário.',
+      });
+    } else if (targetStatus !== prevStatus) {
+      history.unshift({
+        id: `hst-${Date.now()}-st`,
+        timestamp: nowIso,
+        action: 'status_changed',
+        previousStatus: prevStatus,
+        newStatus: targetStatus,
+        performedBy: `${currentUser.name} (${currentUser.role})`,
+        reason,
+      });
+    } else if (req.body.notes !== undefined && req.body.notes !== current.notes) {
+      history.unshift({
+        id: `hst-${Date.now()}-nt`,
+        timestamp: nowIso,
+        action: 'notes_updated',
+        performedBy: `${currentUser.name} (${currentUser.role})`,
+      });
+    }
+
+    const targetProf = db.professionals.find((p) => p.id === targetProfId);
+    const targetSrv = db.services.find((s) => s.id === targetServiceId);
 
     db.appointments[idx] = {
       ...current,
       ...req.body,
+      professionalId: targetProfId,
+      professionalName: targetProf ? targetProf.name : current.professionalName,
+      serviceId: targetServiceId,
+      serviceName: targetSrv ? targetSrv.name : current.serviceName,
+      price: targetSrv ? targetSrv.price : current.price,
       referencePhotos:
         photosCheck.sanitized !== undefined ? photosCheck.sanitized : current.referencePhotos || [],
+      cancellationReason:
+        isCancelling
+          ? reason || req.body.cancellationReason || current.cancellationReason
+          : current.cancellationReason,
+      history,
       endTime: computedEndTime,
       id: current.id,
     };
+
+    if (isCancelling) {
+      addNotification(
+        `Agendamento Cancelado: ${current.clientName}`,
+        `O atendimento de ${current.serviceName} (${prevDate} às ${prevStartTime}) foi cancelado por ${currentUser.name}.`,
+        'agenda',
+        'agenda'
+      );
+      notifyWaitlistOnSlotFreed(prevDate, prevStartTime, prevEndTime, prevProfId, prevProfName);
+    } else if (isDateOrTimeChanged) {
+      addNotification(
+        `Agendamento Remarcado: ${current.clientName}`,
+        `Horário alterado de ${prevDate} (${prevStartTime}) para ${targetDate} às ${targetStartTime} com ${db.appointments[idx].professionalName}.`,
+        'agenda',
+        'agenda'
+      );
+      notifyWaitlistOnSlotFreed(prevDate, prevStartTime, prevEndTime, prevProfId, prevProfName);
+    } else if (targetStatus !== prevStatus) {
+      addNotification(
+        `Status de Agendamento: ${current.clientName}`,
+        `Atendimento de ${current.serviceName} (${targetDate} às ${targetStartTime}) atualizado para '${targetStatus}'.`,
+        'agenda',
+        'agenda'
+      );
+    }
+
     saveDb(db);
     logAudit(
       req.user!,
-      'APPOINTMENT_UPDATED',
+      isCancelling
+        ? 'APPOINTMENT_CANCELLED'
+        : isDateOrTimeChanged
+        ? 'APPOINTMENT_RESCHEDULED'
+        : 'APPOINTMENT_UPDATED',
       'agenda',
-      `Status/dados do agendamento de '${db.appointments[idx].clientName}' atualizado para '${db.appointments[idx].status}'.`,
+      `Agendamento de '${db.appointments[idx].clientName}' atualizado (${prevDate} ${prevStartTime} -> ${targetDate} ${targetStartTime}, status: ${db.appointments[idx].status}).`,
       'info',
       db.appointments[idx].id,
       req
@@ -2132,9 +2498,86 @@ async function startServer() {
       return;
     }
     const removed = db.appointments.splice(idx, 1)[0];
+    if (removed.status !== 'cancelled') {
+      notifyWaitlistOnSlotFreed(
+        removed.date,
+        removed.startTime,
+        removed.endTime,
+        removed.professionalId,
+        removed.professionalName
+      );
+    }
     saveDb(db);
     logAudit(req.user!, 'APPOINTMENT_DELETED', 'agenda', `Agendamento de '${removed.clientName}' (${removed.date} ${removed.startTime}) excluído.`, 'warning', removed.id, req);
     res.json({ success: true });
+  });
+
+  // --- ADM WAITLIST MANAGEMENT ---
+  app.post('/api/waitlist', requireAuth, requireModulePermission('agenda'), (req: AuthenticatedRequest, res: Response) => {
+    const { clientId, serviceId, professionalId, desiredDate, preferredPeriod, preferredTimes, notes } = req.body;
+    const client = db.clients.find((c) => c.id === clientId);
+    const srv = db.services.find((s) => s.id === serviceId);
+    const prof = db.professionals.find((p) => p.id === professionalId);
+    if (!client || !srv || !desiredDate) {
+      res.status(400).json({ error: 'Selecione cliente, serviço e data desejada para a fila de espera.' });
+      return;
+    }
+    const cleanPreferredTimes = Array.isArray(preferredTimes)
+      ? preferredTimes.map((t) => String(t).trim()).filter(Boolean)
+      : [];
+
+    const entry: WaitlistEntry = {
+      id: `wlt-${Date.now()}`,
+      clientId: client.id,
+      clientName: client.name,
+      clientPhone: client.phone,
+      serviceId: srv.id,
+      serviceName: srv.name,
+      professionalId: prof ? prof.id : 'any',
+      professionalName: prof ? prof.name : 'Qualquer Especialista',
+      desiredDate,
+      preferredPeriod: preferredPeriod || 'Qualquer Horário',
+      preferredTimes: cleanPreferredTimes,
+      notes: (notes || '').trim(),
+      status: 'waiting',
+      createdAt: new Date().toISOString(),
+    };
+    if (!Array.isArray(db.waitlist)) db.waitlist = [];
+    db.waitlist.unshift(entry);
+    addNotification(
+      `Fila de Espera: ${client.name}`,
+      `${client.name} aguarda vaga para ${srv.name} em ${desiredDate} (${entry.preferredPeriod}${cleanPreferredTimes.length ? ` · Horários: ${cleanPreferredTimes.join(', ')}` : ''}).`,
+      'agenda',
+      'agenda'
+    );
+    saveDb(db);
+    logAudit(req.user!, 'WAITLIST_CREATED', 'agenda', `Cliente '${client.name}' incluída na fila de espera para ${desiredDate}.`, 'info', entry.id, req);
+    res.status(201).json(entry);
+  });
+
+  app.put('/api/waitlist/:id', requireAuth, requireModulePermission('agenda'), (req: AuthenticatedRequest, res: Response) => {
+    if (!Array.isArray(db.waitlist)) db.waitlist = [];
+    const idx = db.waitlist.findIndex((w) => w.id === req.params.id);
+    if (idx === -1) {
+      res.status(404).json({ error: 'Registro da fila de espera não encontrado.' });
+      return;
+    }
+    db.waitlist[idx] = {
+      ...db.waitlist[idx],
+      ...req.body,
+      id: db.waitlist[idx].id,
+    };
+    saveDb(db);
+    logAudit(
+      req.user!,
+      'WAITLIST_UPDATED',
+      'agenda',
+      `Fila de espera de '${db.waitlist[idx].clientName}' atualizada para '${db.waitlist[idx].status}'.`,
+      'info',
+      db.waitlist[idx].id,
+      req
+    );
+    res.json(db.waitlist[idx]);
   });
 
   // --- SALES (PDV) WITH AUTOMATIC STOCK DEDUCTION, CASHFLOW & COMMISSIONS ---
@@ -2906,81 +3349,30 @@ async function startServer() {
     });
   });
 
-  // Real Slot Availability Engine (Computed from Professional workHours, workDays, and non-cancelled Appointments)
+  // Real Slot Availability Engine (Computed from Professional workHours, workDays, service duration, and non-cancelled Appointments)
   app.get('/api/public/availability', (req: Request, res: Response) => {
     const { date, professionalId, serviceId, excludeAppointmentId } = req.query as Record<string, string>;
     if (!date || !professionalId || !serviceId) {
       res.status(400).json({ error: 'Informe data, especialista e serviço para consultar horários.' });
       return;
     }
-    const prof = db.professionals.find((p) => p.id === professionalId && p.status === 'active');
-    const srv = db.services.find((s) => s.id === serviceId && s.status === 'active');
-    if (!prof || !srv) {
-      res.status(404).json({ error: 'Especialista ou serviço indisponível.' });
+
+    const avail = computeProfessionalAvailability(date, professionalId, serviceId, excludeAppointmentId);
+    if (!avail.validEntities) {
+      res.status(404).json({ error: avail.error });
       return;
-    }
-
-    // Parse date weekday in local representation
-    const [yy, mm, dd] = date.split('-').map(Number);
-    const dateObj = new Date(yy, (mm || 1) - 1, dd || 1);
-    const dayLabel = WEEKDAY_MAP[dateObj.getDay()];
-
-    if (Array.isArray(prof.workDays) && prof.workDays.length > 0 && !prof.workDays.includes(dayLabel)) {
-      res.json({
-        date,
-        dayLabel,
-        isWorkingDay: false,
-        reason: `${prof.name} não atende às/aos ${dayLabel}s (Dias de atendimento: ${prof.workDays.join(', ')}).`,
-        availableSlots: [],
-        occupiedIntervals: [],
-      });
-      return;
-    }
-
-    // Parse workHours e.g. "09:00 às 19:00"
-    const match = (prof.workHours || '').match(/(\d{2}:\d{2}).*?(\d{2}:\d{2})/);
-    const openTime = match ? match[1] : db.settings.openingTime || '09:00';
-    const closeTime = match ? match[2] : db.settings.closingTime || '20:00';
-    const startWindow = timeToMinutes(openTime);
-    const endWindow = timeToMinutes(closeTime);
-    const step = Math.max(15, Number(db.settings.slotIntervalMinutes || 30));
-    const duration = srv.durationMinutes;
-
-    const dayAppointments = db.appointments.filter(
-      (a) =>
-        a.professionalId === prof.id &&
-        a.date === date &&
-        a.status !== 'cancelled' &&
-        a.id !== excludeAppointmentId
-    );
-
-    const availableSlots: { startTime: string; endTime: string }[] = [];
-    for (let t = startWindow; t + duration <= endWindow; t += step) {
-      const candidateStart = t;
-      const candidateEnd = t + duration;
-      const hasOverlap = dayAppointments.some((a) => {
-        const exStart = timeToMinutes(a.startTime);
-        const exEnd = timeToMinutes(a.endTime);
-        return candidateStart < exEnd && candidateEnd > exStart;
-      });
-      if (!hasOverlap) {
-        const sh = String(Math.floor(candidateStart / 60)).padStart(2, '0');
-        const sm = String(candidateStart % 60).padStart(2, '0');
-        const eh = String(Math.floor(candidateEnd / 60)).padStart(2, '0');
-        const em = String(candidateEnd % 60).padStart(2, '0');
-        availableSlots.push({ startTime: `${sh}:${sm}`, endTime: `${eh}:${em}` });
-      }
     }
 
     res.json({
-      date,
-      dayLabel,
-      isWorkingDay: true,
-      availableSlots,
-      occupiedIntervals: dayAppointments.map((a) => ({
-        startTime: a.startTime,
-        endTime: a.endTime,
-      })),
+      date: avail.date,
+      dayLabel: avail.dayLabel,
+      isWorkingDay: avail.isWorkingDay,
+      reason: avail.reason,
+      openTime: avail.openTime,
+      closeTime: avail.closeTime,
+      durationMinutes: avail.duration,
+      availableSlots: avail.availableSlots,
+      occupiedIntervals: avail.occupiedIntervals,
     });
   });
 
@@ -3196,7 +3588,7 @@ async function startServer() {
       res.status(403).json({ error: 'O agendamento online está temporariamente pausado pelo salão.' });
       return;
     }
-    const { professionalId, serviceId, date, startTime, notes, referencePhotos } = req.body;
+    const { professionalId, serviceId, date, startTime, notes, referencePhotos, status } = req.body;
     const prof = db.professionals.find((p) => p.id === professionalId && p.status === 'active');
     const srv = db.services.find((s) => s.id === serviceId && s.status === 'active');
 
@@ -3211,48 +3603,18 @@ async function startServer() {
       return;
     }
 
-    const [hh, mm] = String(startTime).split(':').map(Number);
-    if (isNaN(hh) || isNaN(mm)) {
-      res.status(400).json({ error: 'Horário inválido.' });
-      return;
-    }
-    const newStartMin = hh * 60 + mm;
-    const newEndMin = newStartMin + srv.durationMinutes;
-    const endH = String(Math.floor(newEndMin / 60) % 24).padStart(2, '0');
-    const endM = String(newEndMin % 60).padStart(2, '0');
-    const endTime = `${endH}:${endM}`;
-
-    // Verify workDay
-    const [yy, mo, dd] = String(date).split('-').map(Number);
-    const dateObj = new Date(yy, (mo || 1) - 1, dd || 1);
-    const dayLabel = WEEKDAY_MAP[dateObj.getDay()];
-    if (Array.isArray(prof.workDays) && prof.workDays.length > 0 && !prof.workDays.includes(dayLabel)) {
-      res.status(400).json({
-        error: `${prof.name} não realiza atendimentos às/aos ${dayLabel}s.`,
-      });
+    const scheduleCheck = validateScheduleWindow(prof.id, srv.id, date, startTime);
+    if (!scheduleCheck.valid) {
+      res.status(scheduleCheck.httpStatus || 400).json({ error: scheduleCheck.error });
       return;
     }
 
-    // Verify overlap conflict
-    const conflict = db.appointments.find((a) => {
-      if (a.professionalId !== prof.id || a.date !== date || a.status === 'cancelled') return false;
-      const exStart = timeToMinutes(a.startTime);
-      const exEnd = timeToMinutes(a.endTime);
-      return newStartMin < exEnd && newEndMin > existEndOrStart(exStart);
-    });
+    const endTime = scheduleCheck.endTime!;
+    const initialStatus: Appointment['status'] =
+      status === 'requested' || status === 'confirmed' ? status : 'requested';
+    const nowIso = new Date().toISOString();
 
-    function existEndOrStart(v: number) {
-      return v;
-    }
-
-    if (conflict) {
-      res.status(409).json({
-        error: `Este horário (${startTime}) acabou de ser preenchido na agenda de ${prof.name}. Escolha outro horário ou entre na Fila de Espera.`,
-      });
-      return;
-    }
-
-    const apt = {
+    const apt: Appointment = {
       id: `apt-${Date.now()}`,
       clientId: client.id,
       clientName: client.name,
@@ -3265,17 +3627,28 @@ async function startServer() {
       startTime,
       endTime,
       price: srv.price,
-      status: 'confirmed' as const,
-      paymentStatus: 'pending' as const,
+      status: initialStatus,
+      paymentStatus: 'pending',
       notes: (notes || '').trim(),
       referencePhotos: photosCheck.sanitized || [],
-      createdAt: new Date().toISOString(),
+      history: [
+        {
+          id: `hst-${Date.now()}`,
+          timestamp: nowIso,
+          action: 'created',
+          newStatus: initialStatus,
+          newDate: date,
+          newStartTime: startTime,
+          performedBy: `${client.name} (Portal da Cliente)`,
+        },
+      ],
+      createdAt: nowIso,
     };
 
     db.appointments.unshift(apt);
     addNotification(
-      `Novo Agendamento Online: ${client.name}`,
-      `${client.name} agendou ${srv.name} com ${prof.name} para ${date} às ${startTime}.`,
+      `Nova Solicitação de Agendamento: ${client.name}`,
+      `${client.name} solicitou ${srv.name} com ${prof.name} para ${date} das ${startTime} às ${endTime}.`,
       'agenda',
       'agenda'
     );
@@ -3339,13 +3712,36 @@ async function startServer() {
       return;
     }
 
+    const prevStatus = apt.status;
+    const prevDate = apt.date;
+    const prevStartTime = apt.startTime;
+    const prevEndTime = apt.endTime;
+    const reason = typeof req.body?.reason === 'string' && req.body.reason.trim()
+      ? req.body.reason.trim()
+      : 'Cancelado pela cliente via portal online.';
+
     apt.status = 'cancelled';
+    apt.cancellationReason = reason;
+    if (!Array.isArray(apt.history)) apt.history = [];
+    apt.history.unshift({
+      id: `hst-${Date.now()}-canc`,
+      timestamp: new Date().toISOString(),
+      action: 'cancelled',
+      previousStatus: prevStatus,
+      newStatus: 'cancelled',
+      previousDate: prevDate,
+      previousStartTime: prevStartTime,
+      performedBy: `${client.name} (Cliente)`,
+      reason,
+    });
+
     addNotification(
       `Cancelamento Online: ${client.name}`,
-      `A cliente ${client.name} cancelou o horário de ${apt.serviceName} (${apt.date} às ${apt.startTime}).`,
+      `A cliente ${client.name} cancelou o horário de ${apt.serviceName} (${prevDate} às ${prevStartTime}). Motivo: ${reason}`,
       'agenda',
       'agenda'
     );
+    notifyWaitlistOnSlotFreed(prevDate, prevStartTime, prevEndTime, apt.professionalId, apt.professionalName);
     saveDb(db);
     res.json(apt);
   });
@@ -3369,7 +3765,7 @@ async function startServer() {
       return;
     }
 
-    const { date, startTime, professionalId } = req.body;
+    const { date, startTime, professionalId, reason } = req.body;
     if (!date || !startTime) {
       res.status(400).json({ error: 'Informe a nova data e horário para reagendamento.' });
       return;
@@ -3383,38 +3779,48 @@ async function startServer() {
       return;
     }
 
-    const newStartMin = timeToMinutes(startTime);
-    const newEndMin = newStartMin + srv.durationMinutes;
-    const endH = String(Math.floor(newEndMin / 60) % 24).padStart(2, '0');
-    const endM = String(newEndMin % 60).padStart(2, '0');
-    const endTime = `${endH}:${endM}`;
-
-    const conflict = db.appointments.find((a) => {
-      if (a.id === apt.id || a.professionalId !== prof.id || a.date !== date || a.status === 'cancelled') return false;
-      const exStart = timeToMinutes(a.startTime);
-      const exEnd = timeToMinutes(a.endTime);
-      return newStartMin < exEnd && newEndMin > exStart;
-    });
-    if (conflict) {
-      res.status(409).json({
-        error: `Horário indisponível: ${prof.name} já possui atendimento das ${conflict.startTime} às ${conflict.endTime}.`,
-      });
+    const scheduleCheck = validateScheduleWindow(prof.id, srv.id, date, startTime, apt.id);
+    if (!scheduleCheck.valid) {
+      res.status(scheduleCheck.httpStatus || 400).json({ error: scheduleCheck.error });
       return;
     }
 
+    const prevDate = apt.date;
+    const prevStartTime = apt.startTime;
+    const prevEndTime = apt.endTime;
+    const prevProfId = apt.professionalId;
+    const prevProfName = apt.professionalName;
+    const prevStatus = apt.status;
+
     apt.date = date;
     apt.startTime = startTime;
-    apt.endTime = endTime;
+    apt.endTime = scheduleCheck.endTime!;
     apt.professionalId = prof.id;
     apt.professionalName = prof.name;
     apt.status = 'confirmed';
 
+    if (!Array.isArray(apt.history)) apt.history = [];
+    apt.history.unshift({
+      id: `hst-${Date.now()}-resch`,
+      timestamp: new Date().toISOString(),
+      action: 'rescheduled',
+      previousStatus: prevStatus,
+      newStatus: 'confirmed',
+      previousDate: prevDate,
+      previousStartTime: prevStartTime,
+      newDate: date,
+      newStartTime: startTime,
+      performedBy: `${client.name} (Cliente)`,
+      reason: typeof reason === 'string' && reason.trim() ? reason.trim() : 'Remarcado pela cliente via portal online.',
+    });
+
     addNotification(
-      `Reagendamento Online: ${client.name}`,
-      `${client.name} reagendou ${apt.serviceName} para ${date} às ${startTime} com ${prof.name}.`,
+      `Remarcação Online: ${client.name}`,
+      `${client.name} remarcou ${apt.serviceName} de ${prevDate} (${prevStartTime}) para ${date} às ${startTime} com ${prof.name}.`,
       'agenda',
       'agenda'
     );
+    notifyWaitlistOnSlotFreed(prevDate, prevStartTime, prevEndTime, prevProfId, prevProfName);
     saveDb(db);
     res.json(apt);
   });
@@ -3422,13 +3828,17 @@ async function startServer() {
   // Client Waitlist Request
   app.post('/api/client-portal/waitlist', requireClientAuth, (req: AuthenticatedRequest, res: Response) => {
     const client = req.client!;
-    const { serviceId, professionalId, desiredDate, preferredPeriod, notes } = req.body;
+    const { serviceId, professionalId, desiredDate, preferredPeriod, preferredTimes, notes } = req.body;
     const srv = db.services.find((s) => s.id === serviceId);
     const prof = db.professionals.find((p) => p.id === professionalId);
     if (!srv || !desiredDate) {
       res.status(400).json({ error: 'Selecione o serviço e a data desejada para a fila de espera.' });
       return;
     }
+
+    const cleanPreferredTimes = Array.isArray(preferredTimes)
+      ? preferredTimes.map((t) => String(t).trim()).filter(Boolean)
+      : [];
 
     const entry: WaitlistEntry = {
       id: `wlt-${Date.now()}`,
@@ -3441,6 +3851,7 @@ async function startServer() {
       professionalName: prof ? prof.name : 'Qualquer Especialista',
       desiredDate,
       preferredPeriod: preferredPeriod || 'Qualquer Horário',
+      preferredTimes: cleanPreferredTimes,
       notes: (notes || '').trim(),
       status: 'waiting',
       createdAt: new Date().toISOString(),
@@ -3451,7 +3862,7 @@ async function startServer() {
 
     addNotification(
       `Nova Solicitação na Fila de Espera`,
-      `${client.name} solicitou vaga para ${srv.name} em ${desiredDate} (${entry.preferredPeriod}).`,
+      `${client.name} solicitou vaga para ${srv.name} em ${desiredDate} (${entry.preferredPeriod}${cleanPreferredTimes.length ? ` · Horários preferidos: ${cleanPreferredTimes.join(', ')}` : ''}).`,
       'agenda',
       'agenda'
     );

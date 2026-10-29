@@ -473,6 +473,17 @@
       "referencePhotos": [
         "/src/assets/images/salon_banner_hair_ritual_1793234472028.jpg",
         "/src/assets/images/salon_banner_couture_interior_1793234470450.jpg"
+      ],
+      "history": [
+        {
+          "id": "hst-init-apt-1",
+          "timestamp": "2026-10-24T14:00:00Z",
+          "action": "created",
+          "newStatus": "completed",
+          "newDate": "2026-10-29",
+          "newStartTime": "09:30",
+          "performedBy": "Sistema / Recepção"
+        }
       ]
     },
     {
@@ -492,7 +503,18 @@
       "paymentStatus": "pending",
       "notes": "Aplicar ampola Fusio-Dose complementar se necessário.",
       "createdAt": "2026-10-25T10:00:00Z",
-      "referencePhotos": []
+      "referencePhotos": [],
+      "history": [
+        {
+          "id": "hst-init-apt-2",
+          "timestamp": "2026-10-25T10:00:00Z",
+          "action": "created",
+          "newStatus": "in_progress",
+          "newDate": "2026-10-29",
+          "newStartTime": "14:00",
+          "performedBy": "Sistema / Recepção"
+        }
+      ]
     },
     {
       "id": "apt-3",
@@ -513,6 +535,17 @@
       "createdAt": "2026-10-26T11:20:00Z",
       "referencePhotos": [
         "/src/assets/images/salon_banner_hair_ritual_1793234472028.jpg"
+      ],
+      "history": [
+        {
+          "id": "hst-init-apt-3",
+          "timestamp": "2026-10-26T11:20:00Z",
+          "action": "created",
+          "newStatus": "confirmed",
+          "newDate": "2026-10-29",
+          "newStartTime": "16:00",
+          "performedBy": "Sistema / Recepção"
+        }
       ]
     },
     {
@@ -534,6 +567,17 @@
       "createdAt": "2026-10-27T09:15:00Z",
       "referencePhotos": [
         "/src/assets/images/salon_banner_facial_spa_1793234472494.jpg"
+      ],
+      "history": [
+        {
+          "id": "hst-init-apt-4",
+          "timestamp": "2026-10-27T09:15:00Z",
+          "action": "created",
+          "newStatus": "scheduled",
+          "newDate": "2026-10-29",
+          "newStartTime": "17:30",
+          "performedBy": "Sistema / Recepção"
+        }
       ]
     },
     {
@@ -553,7 +597,18 @@
       "paymentStatus": "pending",
       "notes": "Preferência por tons nude rosados.",
       "createdAt": "2026-10-27T16:45:00Z",
-      "referencePhotos": []
+      "referencePhotos": [],
+      "history": [
+        {
+          "id": "hst-init-apt-5",
+          "timestamp": "2026-10-27T16:45:00Z",
+          "action": "created",
+          "newStatus": "confirmed",
+          "newDate": "2026-10-29",
+          "newStartTime": "15:00",
+          "performedBy": "Sistema / Recepção"
+        }
+      ]
     },
     {
       "id": "apt-prof-inprog",
@@ -575,7 +630,18 @@
         "/src/assets/images/salon_banner_hair_ritual_1793234472028.jpg",
         "/src/assets/images/salon_banner_facial_spa_1793234472494.jpg"
       ],
-      "createdAt": "2026-10-28T20:19:44.804Z"
+      "createdAt": "2026-10-28T20:19:44.804Z",
+      "history": [
+        {
+          "id": "hst-init-apt-prof-inprog",
+          "timestamp": "2026-10-28T20:19:44.804Z",
+          "action": "created",
+          "newStatus": "in_progress",
+          "newDate": "2026-10-29",
+          "newStartTime": "13:30",
+          "performedBy": "Sistema / Recepção"
+        }
+      ]
     },
     {
       "id": "apt-prof-next",
@@ -596,7 +662,18 @@
       "referencePhotos": [
         "/src/assets/images/salon_banner_hair_ritual_1793234472028.jpg"
       ],
-      "createdAt": "2026-10-28T13:19:44.804Z"
+      "createdAt": "2026-10-28T13:19:44.804Z",
+      "history": [
+        {
+          "id": "hst-init-apt-prof-next",
+          "timestamp": "2026-10-28T13:19:44.804Z",
+          "action": "created",
+          "newStatus": "confirmed",
+          "newDate": "2026-10-30",
+          "newStartTime": "10:30",
+          "performedBy": "Sistema / Recepção"
+        }
+      ]
     },
     {
       "id": "apt-prof-canc",
@@ -615,7 +692,18 @@
       "paymentStatus": "pending",
       "notes": "Cancelado com antecedência pela cliente devido a viagem corporativa (reagendado para 16:00).",
       "referencePhotos": [],
-      "createdAt": "2026-10-28T01:19:44.804Z"
+      "createdAt": "2026-10-28T01:19:44.804Z",
+      "history": [
+        {
+          "id": "hst-init-apt-prof-canc",
+          "timestamp": "2026-10-28T01:19:44.804Z",
+          "action": "created",
+          "newStatus": "cancelled",
+          "newDate": "2026-10-29",
+          "newStartTime": "18:00",
+          "performedBy": "Sistema / Recepção"
+        }
+      ]
     }
   ],
   "sales": [
@@ -1030,5 +1118,25 @@
     ],
     "cancellationNoticeHours": 4
   },
-  "waitlist": []
+  "waitlist": [
+    {
+      "id": "wlt-seed-1",
+      "clientId": "cli-2",
+      "clientName": "Carolina Mendes Fontes",
+      "clientPhone": "(11) 98821-3390",
+      "serviceId": "srv-2",
+      "serviceName": "Corte Autoral & Escova Modelada",
+      "professionalId": "prf-1",
+      "professionalName": "Rafael Albuquerque",
+      "desiredDate": "2026-10-29",
+      "preferredPeriod": "Tarde",
+      "preferredTimes": [
+        "15:00",
+        "16:00"
+      ],
+      "notes": "Deseja encaixe na parte da tarde caso abra vaga com Rafael.",
+      "status": "waiting",
+      "createdAt": "2026-10-28T22:36:01.920Z"
+    }
+  ]
 }

@@ -7,7 +7,7 @@
       "role": "admin",
       "status": "active",
       "phone": "(11) 99812-4400",
-      "lastLogin": "2026-10-29T00:42:22.139Z",
+      "lastLogin": "2026-10-29T01:38:24.240Z",
       "twoFactorEnabled": true,
       "permissions": [
         "overview",
@@ -85,7 +85,7 @@
       "role": "professional",
       "status": "active",
       "phone": "(11) 99123-7788",
-      "lastLogin": "2026-10-29T01:20:05.110Z",
+      "lastLogin": "2026-10-29T01:38:24.341Z",
       "twoFactorEnabled": false,
       "permissions": [
         "overview",
@@ -95,8 +95,7 @@
         "commissions",
         "notifications"
       ],
-      "createdAt": "2026-03-01T08:00:00Z",
-      "avatarUrl": "/src/assets/images/salon_banner_hair_ritual_1793234472028.jpg"
+      "createdAt": "2026-03-01T08:00:00Z"
     }
   ],
   "clients": [
@@ -388,8 +387,7 @@
       "rating": 4.98,
       "completedAppointments": 412,
       "status": "active",
-      "bio": "Especialista em mechas criativas, visagismo e cortes estruturados com formação em Paris e Londres.",
-      "avatarUrl": "/src/assets/images/salon_banner_hair_ritual_1793234472028.jpg"
+      "bio": "Especialista em mechas criativas, visagismo e cortes estruturados com formação em Paris e Londres."
     },
     {
       "id": "prf-2",
@@ -456,6 +454,107 @@
   ],
   "appointments": [
     {
+      "id": "apt-1793237904472",
+      "clientId": "cli-1",
+      "clientName": "Beatriz Monteiro de Barros",
+      "clientPhone": "(11) 99410-2211",
+      "professionalId": "prf-1",
+      "professionalName": "Rafael Albuquerque",
+      "serviceId": "srv-2",
+      "serviceName": "Corte Autoral & Escova Modelada",
+      "date": "2026-12-15",
+      "startTime": "16:00",
+      "endTime": "17:00",
+      "price": 320,
+      "status": "cancelled",
+      "paymentStatus": "pending",
+      "notes": "",
+      "referencePhotos": [],
+      "history": [
+        {
+          "id": "hst-1793237904477-canc",
+          "timestamp": "2026-10-29T01:38:24.477Z",
+          "action": "cancelled",
+          "previousStatus": "confirmed",
+          "newStatus": "cancelled",
+          "previousDate": "2026-12-15",
+          "previousStartTime": "16:00",
+          "performedBy": "Helena Vasconcelos (admin)",
+          "reason": "Cliente solicitou cancelamento por telefone"
+        },
+        {
+          "id": "hst-1793237904472",
+          "timestamp": "2026-10-29T01:38:24.472Z",
+          "action": "created",
+          "newStatus": "confirmed",
+          "newDate": "2026-12-15",
+          "newStartTime": "16:00",
+          "performedBy": "Helena Vasconcelos (admin)"
+        }
+      ],
+      "createdAt": "2026-10-29T01:38:24.472Z",
+      "cancellationReason": "Cliente solicitou cancelamento por telefone"
+    },
+    {
+      "id": "apt-1793237904418",
+      "clientId": "cli-1",
+      "clientName": "Beatriz Monteiro de Barros",
+      "clientPhone": "(11) 99410-2211",
+      "professionalId": "prf-1",
+      "professionalName": "Rafael Albuquerque",
+      "serviceId": "srv-2",
+      "serviceName": "Corte Autoral & Escova Modelada",
+      "date": "2026-12-15",
+      "startTime": "14:00",
+      "endTime": "15:00",
+      "price": 320,
+      "status": "completed",
+      "paymentStatus": "pending",
+      "notes": "Teste integração agenda",
+      "referencePhotos": [],
+      "history": [
+        {
+          "id": "hst-1793237904465-st",
+          "timestamp": "2026-10-29T01:38:24.465Z",
+          "action": "status_changed",
+          "previousStatus": "in_progress",
+          "newStatus": "completed",
+          "performedBy": "Rafael Albuquerque (professional)"
+        },
+        {
+          "id": "hst-1793237904459-st",
+          "timestamp": "2026-10-29T01:38:24.459Z",
+          "action": "status_changed",
+          "previousStatus": "confirmed",
+          "newStatus": "in_progress",
+          "performedBy": "Rafael Albuquerque (professional)"
+        },
+        {
+          "id": "hst-1793237904439-resch",
+          "timestamp": "2026-10-29T01:38:24.439Z",
+          "action": "rescheduled",
+          "previousStatus": "requested",
+          "newStatus": "confirmed",
+          "previousDate": "2026-12-15",
+          "previousStartTime": "10:00",
+          "newDate": "2026-12-15",
+          "newStartTime": "14:00",
+          "performedBy": "Beatriz Monteiro de Barros (Cliente)",
+          "reason": "Mudança para tarde"
+        },
+        {
+          "id": "hst-1793237904418",
+          "timestamp": "2026-10-29T01:38:24.418Z",
+          "action": "created",
+          "newStatus": "requested",
+          "newDate": "2026-12-15",
+          "newStartTime": "10:00",
+          "performedBy": "Beatriz Monteiro de Barros (Portal da Cliente)"
+        }
+      ],
+      "createdAt": "2026-10-29T01:38:24.418Z"
+    },
+    {
       "id": "apt-1",
       "clientId": "cli-1",
       "clientName": "Beatriz Monteiro de Barros",
@@ -475,6 +574,17 @@
       "referencePhotos": [
         "/src/assets/images/salon_banner_hair_ritual_1793234472028.jpg",
         "/src/assets/images/salon_banner_couture_interior_1793234470450.jpg"
+      ],
+      "history": [
+        {
+          "id": "hst-init-apt-1",
+          "timestamp": "2026-10-24T14:00:00Z",
+          "action": "created",
+          "newStatus": "completed",
+          "newDate": "2026-10-29",
+          "newStartTime": "09:30",
+          "performedBy": "Sistema / Recepção"
+        }
       ]
     },
     {
@@ -494,7 +604,18 @@
       "paymentStatus": "pending",
       "notes": "Aplicar ampola Fusio-Dose complementar se necessário.",
       "createdAt": "2026-10-25T10:00:00Z",
-      "referencePhotos": []
+      "referencePhotos": [],
+      "history": [
+        {
+          "id": "hst-init-apt-2",
+          "timestamp": "2026-10-25T10:00:00Z",
+          "action": "created",
+          "newStatus": "in_progress",
+          "newDate": "2026-10-29",
+          "newStartTime": "14:00",
+          "performedBy": "Sistema / Recepção"
+        }
+      ]
     },
     {
       "id": "apt-3",
@@ -509,13 +630,23 @@
       "startTime": "16:00",
       "endTime": "17:00",
       "price": 320,
-      "status": "in_progress",
+      "status": "confirmed",
       "paymentStatus": "pending",
-      "notes": "Fórmula técnica testada pelo especialista",
+      "notes": "Manter comprimento e renovar camadas frontais.",
       "createdAt": "2026-10-26T11:20:00Z",
       "referencePhotos": [
-        "/src/assets/images/salon_banner_hair_ritual_1793234472028.jpg",
-        "/src/assets/images/salon_banner_facial_spa_1793234472494.jpg"
+        "/src/assets/images/salon_banner_hair_ritual_1793234472028.jpg"
+      ],
+      "history": [
+        {
+          "id": "hst-init-apt-3",
+          "timestamp": "2026-10-26T11:20:00Z",
+          "action": "created",
+          "newStatus": "confirmed",
+          "newDate": "2026-10-29",
+          "newStartTime": "16:00",
+          "performedBy": "Sistema / Recepção"
+        }
       ]
     },
     {
@@ -537,6 +668,17 @@
       "createdAt": "2026-10-27T09:15:00Z",
       "referencePhotos": [
         "/src/assets/images/salon_banner_facial_spa_1793234472494.jpg"
+      ],
+      "history": [
+        {
+          "id": "hst-init-apt-4",
+          "timestamp": "2026-10-27T09:15:00Z",
+          "action": "created",
+          "newStatus": "scheduled",
+          "newDate": "2026-10-29",
+          "newStartTime": "17:30",
+          "performedBy": "Sistema / Recepção"
+        }
       ]
     },
     {
@@ -556,7 +698,18 @@
       "paymentStatus": "pending",
       "notes": "Preferência por tons nude rosados.",
       "createdAt": "2026-10-27T16:45:00Z",
-      "referencePhotos": []
+      "referencePhotos": [],
+      "history": [
+        {
+          "id": "hst-init-apt-5",
+          "timestamp": "2026-10-27T16:45:00Z",
+          "action": "created",
+          "newStatus": "confirmed",
+          "newDate": "2026-10-29",
+          "newStartTime": "15:00",
+          "performedBy": "Sistema / Recepção"
+        }
+      ]
     },
     {
       "id": "apt-prof-inprog",
@@ -578,7 +731,18 @@
         "/src/assets/images/salon_banner_hair_ritual_1793234472028.jpg",
         "/src/assets/images/salon_banner_facial_spa_1793234472494.jpg"
       ],
-      "createdAt": "2026-10-28T20:19:44.804Z"
+      "createdAt": "2026-10-28T20:19:44.804Z",
+      "history": [
+        {
+          "id": "hst-init-apt-prof-inprog",
+          "timestamp": "2026-10-28T20:19:44.804Z",
+          "action": "created",
+          "newStatus": "in_progress",
+          "newDate": "2026-10-29",
+          "newStartTime": "13:30",
+          "performedBy": "Sistema / Recepção"
+        }
+      ]
     },
     {
       "id": "apt-prof-next",
@@ -599,7 +763,18 @@
       "referencePhotos": [
         "/src/assets/images/salon_banner_hair_ritual_1793234472028.jpg"
       ],
-      "createdAt": "2026-10-28T13:19:44.804Z"
+      "createdAt": "2026-10-28T13:19:44.804Z",
+      "history": [
+        {
+          "id": "hst-init-apt-prof-next",
+          "timestamp": "2026-10-28T13:19:44.804Z",
+          "action": "created",
+          "newStatus": "confirmed",
+          "newDate": "2026-10-30",
+          "newStartTime": "10:30",
+          "performedBy": "Sistema / Recepção"
+        }
+      ]
     },
     {
       "id": "apt-prof-canc",
@@ -618,7 +793,18 @@
       "paymentStatus": "pending",
       "notes": "Cancelado com antecedência pela cliente devido a viagem corporativa (reagendado para 16:00).",
       "referencePhotos": [],
-      "createdAt": "2026-10-28T01:19:44.804Z"
+      "createdAt": "2026-10-28T01:19:44.804Z",
+      "history": [
+        {
+          "id": "hst-init-apt-prof-canc",
+          "timestamp": "2026-10-28T01:19:44.804Z",
+          "action": "created",
+          "newStatus": "cancelled",
+          "newDate": "2026-10-29",
+          "newStartTime": "18:00",
+          "performedBy": "Sistema / Recepção"
+        }
+      ]
     }
   ],
   "sales": [
@@ -860,46 +1046,59 @@
   ],
   "auditLogs": [
     {
-      "id": "aud-1793236805157-6ctf",
-      "userId": "usr-4",
-      "userName": "Rafael Albuquerque",
-      "userRole": "professional",
-      "action": "USER_PROFILE_UPDATED",
-      "module": "auth",
-      "targetId": "usr-4",
-      "details": "Foto/dados de perfil de 'Rafael Albuquerque' (professional) atualizados.",
+      "id": "aud-1793237904474-byvu",
+      "userId": "usr-1",
+      "userName": "Helena Vasconcelos",
+      "userRole": "admin",
+      "action": "APPOINTMENT_CREATED",
+      "module": "agenda",
+      "targetId": "apt-1793237904472",
+      "details": "Agendamento criado: Beatriz Monteiro de Barros com Rafael Albuquerque (Corte Autoral & Escova Modelada) em 2026-12-15 das 16:00 às 17:00.",
       "ipAddress": "127.0.0.1",
       "severity": "info",
-      "timestamp": "2026-10-29T01:20:05.157Z"
+      "timestamp": "2026-10-29T01:38:24.474Z"
     },
     {
-      "id": "aud-1793236805148-wp1z",
+      "id": "aud-1793237904466-fehq",
       "userId": "usr-4",
       "userName": "Rafael Albuquerque",
       "userRole": "professional",
       "action": "APPOINTMENT_UPDATED",
       "module": "agenda",
-      "targetId": "apt-3",
-      "details": "Status/dados do agendamento de 'Fernanda Siqueira Lima' atualizado para 'in_progress'.",
+      "targetId": "apt-1793237904418",
+      "details": "Agendamento de 'Beatriz Monteiro de Barros' atualizado (2026-12-15 14:00 -> 2026-12-15 14:00, status: completed).",
       "ipAddress": "127.0.0.1",
       "severity": "info",
-      "timestamp": "2026-10-29T01:20:05.148Z"
+      "timestamp": "2026-10-29T01:38:24.466Z"
     },
     {
-      "id": "aud-1793236805139-5gqv",
+      "id": "aud-1793237904462-whvz",
       "userId": "usr-4",
       "userName": "Rafael Albuquerque",
       "userRole": "professional",
-      "action": "ACCESS_DENIED_PROFESSIONAL_SCOPE",
-      "module": "security",
-      "targetId": "apt-2",
-      "details": "Bloqueado: profissional 'Rafael Albuquerque' tentou alterar atendimento 'apt-2' pertencente a 'Juliana Vasconcelos'.",
+      "action": "APPOINTMENT_UPDATED",
+      "module": "agenda",
+      "targetId": "apt-1793237904418",
+      "details": "Agendamento de 'Beatriz Monteiro de Barros' atualizado (2026-12-15 14:00 -> 2026-12-15 14:00, status: in_progress).",
       "ipAddress": "127.0.0.1",
-      "severity": "warning",
-      "timestamp": "2026-10-29T01:20:05.139Z"
+      "severity": "info",
+      "timestamp": "2026-10-29T01:38:24.462Z"
     },
     {
-      "id": "aud-1793236805111-nnjb",
+      "id": "aud-1793237904456-5klj",
+      "userId": "usr-4",
+      "userName": "Rafael Albuquerque",
+      "userRole": "professional",
+      "action": "APPOINTMENT_UPDATED",
+      "module": "agenda",
+      "targetId": "apt-1793237904418",
+      "details": "Agendamento de 'Beatriz Monteiro de Barros' atualizado (2026-12-15 14:00 -> 2026-12-15 14:00, status: confirmed).",
+      "ipAddress": "127.0.0.1",
+      "severity": "info",
+      "timestamp": "2026-10-29T01:38:24.456Z"
+    },
+    {
+      "id": "aud-1793237904342-e66z",
       "userId": "usr-4",
       "userName": "Rafael Albuquerque",
       "userRole": "professional",
@@ -909,7 +1108,20 @@
       "details": "Login efetuado com sucesso (professional).",
       "ipAddress": "127.0.0.1",
       "severity": "info",
-      "timestamp": "2026-10-29T01:20:05.112Z"
+      "timestamp": "2026-10-29T01:38:24.342Z"
+    },
+    {
+      "id": "aud-1793237904242-q0cj",
+      "userId": "usr-1",
+      "userName": "Helena Vasconcelos",
+      "userRole": "admin",
+      "action": "AUTH_LOGIN_SUCCESS",
+      "module": "auth",
+      "targetId": "usr-1",
+      "details": "Login efetuado com sucesso (admin).",
+      "ipAddress": "127.0.0.1",
+      "severity": "info",
+      "timestamp": "2026-10-29T01:38:24.242Z"
     },
     {
       "id": "aud-1793236330426-6g4g",
@@ -1003,6 +1215,87 @@
   ],
   "notifications": [
     {
+      "id": "not-1793237904478-36dw",
+      "title": "Vaga Liberada na Agenda (2026-12-15 às 16:00)",
+      "message": "O horário das 16:00 às 17:00 com Rafael Albuquerque ficou disponível. Fila de Espera compatível: Beatriz Monteiro de Barros.",
+      "category": "agenda",
+      "read": false,
+      "actionModule": "agenda",
+      "createdAt": "2026-10-29T01:38:24.478Z"
+    },
+    {
+      "id": "not-1793237904477-0k11",
+      "title": "Agendamento Cancelado: Beatriz Monteiro de Barros",
+      "message": "O atendimento de Corte Autoral & Escova Modelada (2026-12-15 às 16:00) foi cancelado por Helena Vasconcelos.",
+      "category": "agenda",
+      "read": false,
+      "actionModule": "agenda",
+      "createdAt": "2026-10-29T01:38:24.477Z"
+    },
+    {
+      "id": "not-1793237904472-soq7",
+      "title": "Novo Agendamento Registrado: Beatriz Monteiro de Barros",
+      "message": "Beatriz Monteiro de Barros agendou Corte Autoral & Escova Modelada com Rafael Albuquerque em 2026-12-15 das 16:00 às 17:00 (Status: confirmed).",
+      "category": "agenda",
+      "read": false,
+      "actionModule": "agenda",
+      "createdAt": "2026-10-29T01:38:24.472Z"
+    },
+    {
+      "id": "not-1793237904465-rczv",
+      "title": "Status de Agendamento: Beatriz Monteiro de Barros",
+      "message": "Atendimento de Corte Autoral & Escova Modelada (2026-12-15 às 14:00) atualizado para 'completed'.",
+      "category": "agenda",
+      "read": false,
+      "actionModule": "agenda",
+      "createdAt": "2026-10-29T01:38:24.465Z"
+    },
+    {
+      "id": "not-1793237904459-6ksy",
+      "title": "Status de Agendamento: Beatriz Monteiro de Barros",
+      "message": "Atendimento de Corte Autoral & Escova Modelada (2026-12-15 às 14:00) atualizado para 'in_progress'.",
+      "category": "agenda",
+      "read": false,
+      "actionModule": "agenda",
+      "createdAt": "2026-10-29T01:38:24.459Z"
+    },
+    {
+      "id": "not-1793237904440-6dg4",
+      "title": "Vaga Liberada na Agenda (2026-12-15 às 10:00)",
+      "message": "O horário das 10:00 às 11:00 com Rafael Albuquerque ficou disponível. Fila de Espera compatível: Beatriz Monteiro de Barros.",
+      "category": "agenda",
+      "read": false,
+      "actionModule": "agenda",
+      "createdAt": "2026-10-29T01:38:24.440Z"
+    },
+    {
+      "id": "not-1793237904439-5v1s",
+      "title": "Remarcação Online: Beatriz Monteiro de Barros",
+      "message": "Beatriz Monteiro de Barros remarcou Corte Autoral & Escova Modelada de 2026-12-15 (10:00) para 2026-12-15 às 14:00 com Rafael Albuquerque.",
+      "category": "agenda",
+      "read": false,
+      "actionModule": "agenda",
+      "createdAt": "2026-10-29T01:38:24.439Z"
+    },
+    {
+      "id": "not-1793237904433-lpi2",
+      "title": "Nova Solicitação na Fila de Espera",
+      "message": "Beatriz Monteiro de Barros solicitou vaga para Corte Autoral & Escova Modelada em 2026-12-15 (Manhã · Horários preferidos: 10:00, 10:30).",
+      "category": "agenda",
+      "read": false,
+      "actionModule": "agenda",
+      "createdAt": "2026-10-29T01:38:24.433Z"
+    },
+    {
+      "id": "not-1793237904418-3f4f",
+      "title": "Nova Solicitação de Agendamento: Beatriz Monteiro de Barros",
+      "message": "Beatriz Monteiro de Barros solicitou Corte Autoral & Escova Modelada com Rafael Albuquerque para 2026-12-15 das 10:00 às 11:00.",
+      "category": "agenda",
+      "read": false,
+      "actionModule": "agenda",
+      "createdAt": "2026-10-29T01:38:24.418Z"
+    },
+    {
       "id": "not-1",
       "title": "Estoque Crítico: 3 itens abaixo do mínimo",
       "message": "Olaplex Nº.3 (3 un), Wella Blondor 800g (4 un) e Bioderma Sensibio (2 un) atingiram nível de reposição.",
@@ -1085,5 +1378,44 @@
     ],
     "cancellationNoticeHours": 4
   },
-  "waitlist": []
+  "waitlist": [
+    {
+      "id": "wlt-1793237904433",
+      "clientId": "cli-1",
+      "clientName": "Beatriz Monteiro de Barros",
+      "clientPhone": "(11) 99410-2211",
+      "serviceId": "srv-2",
+      "serviceName": "Corte Autoral & Escova Modelada",
+      "professionalId": "prf-1",
+      "professionalName": "Rafael Albuquerque",
+      "desiredDate": "2026-12-15",
+      "preferredPeriod": "Manhã",
+      "preferredTimes": [
+        "10:00",
+        "10:30"
+      ],
+      "notes": "Fila de espera para 10:00",
+      "status": "notified",
+      "createdAt": "2026-10-29T01:38:24.433Z"
+    },
+    {
+      "id": "wlt-seed-1",
+      "clientId": "cli-2",
+      "clientName": "Carolina Mendes Fontes",
+      "clientPhone": "(11) 98821-3390",
+      "serviceId": "srv-2",
+      "serviceName": "Corte Autoral & Escova Modelada",
+      "professionalId": "prf-1",
+      "professionalName": "Rafael Albuquerque",
+      "desiredDate": "2026-10-29",
+      "preferredPeriod": "Tarde",
+      "preferredTimes": [
+        "15:00",
+        "16:00"
+      ],
+      "notes": "Deseja encaixe na parte da tarde caso abra vaga com Rafael.",
+      "status": "waiting",
+      "createdAt": "2026-10-28T22:36:01.920Z"
+    }
+  ]
 }

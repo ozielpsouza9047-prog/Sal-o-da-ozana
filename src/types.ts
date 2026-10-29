@@ -109,6 +109,20 @@ export interface Professional {
   bio: string;
 }
 
+export interface AppointmentHistoryEntry {
+  id: string;
+  timestamp: string;
+  action: 'created' | 'status_changed' | 'rescheduled' | 'cancelled' | 'notes_updated';
+  previousStatus?: string;
+  newStatus?: string;
+  previousDate?: string;
+  previousStartTime?: string;
+  newDate?: string;
+  newStartTime?: string;
+  performedBy: string;
+  reason?: string;
+}
+
 export interface Appointment {
   id: string;
   clientId: string;
@@ -122,10 +136,12 @@ export interface Appointment {
   startTime: string; // HH:mm
   endTime: string; // HH:mm
   price: number;
-  status: 'scheduled' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled' | 'no_show';
+  status: 'requested' | 'scheduled' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled' | 'no_show';
   paymentStatus: 'pending' | 'paid';
   notes: string;
   referencePhotos?: string[];
+  cancellationReason?: string;
+  history?: AppointmentHistoryEntry[];
   createdAt: string;
 }
 
@@ -253,6 +269,7 @@ export interface WaitlistEntry {
   professionalName: string;
   desiredDate: string;
   preferredPeriod: 'Manhã' | 'Tarde' | 'Noite' | 'Qualquer Horário';
+  preferredTimes?: string[];
   notes: string;
   status: 'waiting' | 'notified' | 'booked' | 'cancelled';
   createdAt: string;
