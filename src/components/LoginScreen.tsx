@@ -4,6 +4,8 @@ import type { UserAccount } from '../types';
 
 interface LoginScreenProps {
   onLoginSuccess: (token: string, user: UserAccount) => void;
+  onOpenClientPortal?: () => void;
+  onOpenProfessionalPortal?: () => void;
 }
 
 const DEMO_ACCOUNTS = [
@@ -33,7 +35,11 @@ const DEMO_ACCOUNTS = [
   },
 ];
 
-export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
+export const LoginScreen: React.FC<LoginScreenProps> = ({
+  onLoginSuccess,
+  onOpenClientPortal,
+  onOpenProfessionalPortal,
+}) => {
   const [email, setEmail] = useState('admin@luminaatelier.com.br');
   const [password, setPassword] = useState('Admin@2026');
   const [showPassword, setShowPassword] = useState(false);
@@ -83,13 +89,35 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     <div className="min-h-screen bg-[#FAF9F6] text-zinc-900 flex flex-col lg:flex-row items-stretch">
       {/* Left Column: Brand & Security Context */}
       <div className="lg:w-1/2 bg-zinc-950 text-white p-8 lg:p-16 flex flex-col justify-between">
-        <div>
-          <span className="font-serif-display text-2xl font-semibold tracking-tight text-white">
-            Lumina Atelier
-          </span>
-          <p className="text-xs text-zinc-400 mt-1">
-            Gestão Integrada para Salões de Alta Beleza & Bem-Estar
-          </p>
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <span className="font-serif-display text-2xl font-semibold tracking-tight text-white">
+              Lumina Atelier
+            </span>
+            <p className="text-xs text-zinc-400 mt-1">
+              Gestão Integrada para Salões de Alta Beleza & Bem-Estar
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {onOpenClientPortal && (
+              <button
+                type="button"
+                onClick={onOpenClientPortal}
+                className="px-3.5 py-2 text-xs font-medium text-zinc-200 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                ← Área da Cliente
+              </button>
+            )}
+            {onOpenProfessionalPortal && (
+              <button
+                type="button"
+                onClick={onOpenProfessionalPortal}
+                className="px-3.5 py-2 text-xs font-medium text-amber-300 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                Área do Profissional
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="my-12 max-w-lg">

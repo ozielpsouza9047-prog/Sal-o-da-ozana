@@ -22,6 +22,7 @@ import {
   Modal,
   ConfirmDialog,
   EmptyState,
+  UserAvatar,
 } from './CommonUI';
 
 interface ModuleProps {
@@ -220,8 +221,13 @@ export const UsersModule: React.FC<ModuleProps> = ({
               {db.users.map((u) => (
                 <tr key={u.id} className="hover:bg-zinc-50/70">
                   <td className="py-3.5 px-4">
-                    <p className="font-semibold text-zinc-900">{u.name}</p>
-                    <p className="text-[11px] font-mono-num text-zinc-500">{u.email}</p>
+                    <div className="flex items-center gap-3">
+                      <UserAvatar name={u.name} avatarUrl={u.avatarUrl} size="sm" variant="light" />
+                      <div>
+                        <p className="font-semibold text-zinc-900">{u.name}</p>
+                        <p className="text-[11px] font-mono-num text-zinc-500">{u.email}</p>
+                      </div>
+                    </div>
                   </td>
                   <td className="py-3.5 px-4 uppercase font-mono-num font-semibold text-amber-800 whitespace-nowrap">
                     {u.role}
@@ -793,8 +799,71 @@ export const SettingsModule: React.FC<ModuleProps> = ({
   refreshData,
   notify,
 }) => {
-  const [formData, setFormData] = useState<SalonSettings>(db.settings);
+  const [formData, setFormData] = useState<SalonSettings>({
+    ...db.settings,
+    cancellationNoticeHours: db.settings.cancellationNoticeHours ?? 4,
+    banners: db.settings.banners || [],
+  });
   const [isSaving, setIsSaving] = useState(false);
+
+  const PRESET_BANNER_IMAGES = [
+    {
+      label: 'Salão Flagship Jardins',
+      url: '/src/assets/images/salon_banner_couture_interior_1793234470450.jpg',
+    },
+    {
+      label: 'Ritual Mechas & Balayage',
+      url: '/src/assets/images/salon_banner_hair_ritual_1793234472028.jpg',
+    },
+    {
+      label: 'Spa Facial Botânico',
+      url: '/src/assets/images/salon_banner_facial_spa_1793234472494.jpg',
+    },
+  ];
+
+  const handleAddBanner = () => {
+    const current = formData.banners || [];
+    const nextOrder = current.length + 1;
+    setFormData({
+      ...formData,
+      banners: [
+        ...current,
+        {
+          id: `bnr-${Date.now()}`,
+          title: 'Novo Ritual de Beleza Exclusivo',
+          subtitle: 'Personalize o subtítulo promocional ou institucional exibido no portal da cliente.',
+          ctaLabel: 'Agendar Horário',
+          imageUrl: PRESET_BANNER_IMAGES[0].url,
+          active: true,
+          order: nextOrder,
+        },
+      ],
+    });
+  };
+
+  const handleUpdateBanner = (
+    id: string,
+    field: 'title' | 'subtitle' | 'ctaLabel' | 'imageUrl' | 'active' | 'order',
+    value: any
+  ) => {
+    const current = formData.banners || [];
+    setFormData({
+      ...formData,
+      banners: current.map((b) => (b.id === id ? { ...b, [field]: value } : b)),
+    });
+  };
+
+  const handleRemoveBanner = (id: string) => {
+    const current = formData.banners || [];
+    if (current.length <= 1) {
+      notify('warning', 'Atenção', 'Mantenha ao menos 1 banner cadastrado para a página inicial da cliente.');
+      return;
+    }
+    setFormData({
+      ...formData,
+      banners: current.filter((b) => b.id !== id),
+    });
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -806,7 +875,7 @@ export const SettingsModule: React.FC<ModuleProps> = ({
     try {
       const res = await apiRequest('/api/settings', 'PUT', formData);
       if (res) {
-        notify('success', 'Configurações Salvas', 'Os parâmetros globais do salão foram atualizados.');
+        notify('success', 'Configurações Salvas', 'Os parâmetros globais e banners do portal da cliente foram atualizados.');
         await refreshData();
       }
     } finally {
@@ -818,10 +887,10 @@ export const SettingsModule: React.FC<ModuleProps> = ({
     <div className="space-y-8">
       <div>
         <h1 className="font-serif-display text-2xl sm:text-3xl font-semibold text-zinc-900">
-          Configurações do Estabelecimento & Parâmetros Operacionais
+          Configurações do Estabelecimento & Portal da Cliente
         </h1>
         <p className="text-xs text-zinc-500 mt-0.5">
-          Dados cadastrais, regras automáticas de comissionamento/estoque e relatório de escopo técnico
+          Dados cadastrais, regras de cancelamento, administração do carrossel fotográfico da cliente e escopo técnico
         </p>
       </div>
 
@@ -896,10 +965,10 @@ export const SettingsModule: React.FC<ModuleProps> = ({
         </div>
 
         <h2 className="text-base font-semibold text-zinc-900 pt-4 pb-3 border-b border-zinc-100">
-          2. Regras de Automação Operacional (PDV, Estoque e Comissões)
+          2. Regras de Automação Operacional & Política de Cancelamento Online
         </h2>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <label className="flex items-start gap-3 p-4 rounded-lg border border-zinc-200 bg-zinc-50/50 cursor-pointer">
             <input
               type="checkbox"
@@ -914,7 +983,7 @@ export const SettingsModule: React.FC<ModuleProps> = ({
                 Baixa Automática de Estoque no PDV
               </span>
               <span className="text-[11px] text-zinc-500">
-                Ao concluir uma venda de produto, deduzir imediatamente do saldo físico e gerar entrada no Kardex.
+                Deduzir saldo físico e registrar no Kardex ao faturar produtos.
               </span>
             </div>
           </label>
@@ -933,10 +1002,181 @@ export const SettingsModule: React.FC<ModuleProps> = ({
                 Cálculo Automático de Comissões
               </span>
               <span className="text-[11px] text-zinc-500">
-                Gerar automaticamente lançamentos de comissão para o especialista ao faturar serviços ou produtos.
+                Gerar lançamentos de comissão para o especialista ao concluir vendas.
               </span>
             </div>
           </label>
+
+          <div className="p-4 rounded-lg border border-zinc-200 bg-zinc-50/50">
+            <label className="block text-xs font-semibold text-zinc-900 mb-1">
+              Antecedência Mínima (Cancelamento/Reagendamento)
+            </label>
+            <div className="flex items-center gap-2 mt-1.5">
+              <input
+                type="number"
+                min={0}
+                max={72}
+                value={formData.cancellationNoticeHours ?? 4}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    cancellationNoticeHours: Math.max(0, Number(e.target.value)),
+                  })
+                }
+                className="w-20 px-3 py-1.5 text-xs bg-white border border-zinc-300 rounded-lg font-mono-num"
+              />
+              <span className="text-xs text-zinc-600">horas antes do horário agendado</span>
+            </div>
+          </div>
+        </div>
+
+        {/* 3. Banner Carousel Administration */}
+        <div className="pt-4 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-zinc-100">
+            <div>
+              <h2 className="text-base font-semibold text-zinc-900">
+                3. Gestão de Banners Fotográficos — Área Inicial da Cliente
+              </h2>
+              <p className="text-xs text-zinc-500">
+                Administre os slides, títulos, chamadas e fotografias exibidos no carrossel automático da página da cliente.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleAddBanner}
+              className="px-3.5 py-2 text-xs font-medium text-zinc-900 bg-zinc-100 hover:bg-zinc-200 rounded-lg inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Adicionar Slide ao Carrossel</span>
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            {(formData.banners || []).map((banner, idx) => (
+              <div
+                key={banner.id}
+                className="p-4 rounded-xl border border-zinc-200 bg-zinc-50/50 grid grid-cols-1 lg:grid-cols-12 gap-4 items-start"
+              >
+                <div className="lg:col-span-3">
+                  <div className="aspect-video w-full rounded-lg overflow-hidden bg-zinc-900 border border-zinc-200 relative">
+                    <img
+                      src={banner.imageUrl}
+                      alt={banner.title}
+                      className="w-full h-full object-cover"
+                    />
+                    <span className="absolute top-2 left-2 px-2 py-0.5 text-[10px] font-mono-num font-semibold bg-black/70 text-white rounded">
+                      Slide #{idx + 1}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {PRESET_BANNER_IMAGES.map((preset) => (
+                      <button
+                        key={preset.url}
+                        type="button"
+                        onClick={() => handleUpdateBanner(banner.id, 'imageUrl', preset.url)}
+                        className={`px-2 py-1 text-[10px] rounded border transition-colors cursor-pointer ${
+                          banner.imageUrl === preset.url
+                            ? 'bg-zinc-900 text-white border-zinc-900'
+                            : 'bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-100'
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="lg:col-span-9 space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="sm:col-span-2">
+                      <label className="block text-[11px] font-medium text-zinc-600 mb-1">
+                        Título Principal do Banner *
+                      </label>
+                      <input
+                        type="text"
+                        value={banner.title}
+                        onChange={(e) => handleUpdateBanner(banner.id, 'title', e.target.value)}
+                        className="w-full px-3 py-1.5 text-xs bg-white border border-zinc-300 rounded-lg"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-medium text-zinc-600 mb-1">
+                        Texto do Botão (CTA)
+                      </label>
+                      <input
+                        type="text"
+                        value={banner.ctaLabel}
+                        onChange={(e) => handleUpdateBanner(banner.id, 'ctaLabel', e.target.value)}
+                        className="w-full px-3 py-1.5 text-xs bg-white border border-zinc-300 rounded-lg"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-zinc-600 mb-1">
+                      Subtítulo Descritivo
+                    </label>
+                    <input
+                      type="text"
+                      value={banner.subtitle}
+                      onChange={(e) => handleUpdateBanner(banner.id, 'subtitle', e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-zinc-300 rounded-lg"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
+                    <div className="sm:col-span-7">
+                      <label className="block text-[11px] font-medium text-zinc-600 mb-1">
+                        URL da Fotografia (16:9)
+                      </label>
+                      <input
+                        type="text"
+                        value={banner.imageUrl}
+                        onChange={(e) => handleUpdateBanner(banner.id, 'imageUrl', e.target.value)}
+                        className="w-full px-3 py-1.5 text-xs bg-white border border-zinc-300 rounded-lg font-mono-num"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-[11px] font-medium text-zinc-600 mb-1">
+                        Ordem
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={banner.order}
+                        onChange={(e) =>
+                          handleUpdateBanner(banner.id, 'order', Number(e.target.value))
+                        }
+                        className="w-full px-3 py-1.5 text-xs bg-white border border-zinc-300 rounded-lg font-mono-num"
+                      />
+                    </div>
+                    <div className="sm:col-span-3 flex items-center justify-end gap-3 pt-4">
+                      <label className="flex items-center gap-1.5 text-xs text-zinc-700 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={banner.active}
+                          onChange={(e) =>
+                            handleUpdateBanner(banner.id, 'active', e.target.checked)
+                          }
+                          className="rounded border-zinc-300"
+                        />
+                        <span>Visível</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveBanner(banner.id)}
+                        className="p-1.5 text-zinc-400 hover:text-red-600 rounded-lg cursor-pointer"
+                        title="Remover Slide"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="flex justify-end pt-4 border-t border-zinc-100">

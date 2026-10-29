@@ -22,8 +22,17 @@ import {
   Lock,
 } from 'lucide-react';
 import type { AppDatabase, ModuleId, UserAccount } from './types';
-import { ToastContainer, ToastMessage, SkeletonRows } from './components/CommonUI';
+import {
+  ToastContainer,
+  ToastMessage,
+  SkeletonRows,
+  UserAvatar,
+  ProfilePhotoModal,
+  formatRoleLabel,
+} from './components/CommonUI';
 import { LoginScreen } from './components/LoginScreen';
+import { ClientPortal } from './components/ClientPortal';
+import { ProfessionalPortal } from './components/ProfessionalPortal';
 import {
   OverviewModule,
   AgendaModule,
@@ -79,11 +88,13 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 export default function App() {
+  const [portalMode, setPortalMode] = useState<'client' | 'professional' | 'admin'>('client');
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('lumina_auth_token'));
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(null);
   const [db, setDb] = useState<AppDatabase | null>(null);
   const [activeModule, setActiveModule] = useState<ModuleId>('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState<boolean>(Boolean(token));
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
@@ -166,13 +177,70 @@ export default function App() {
     localStorage.setItem('lumina_auth_token', newToken);
     setToken(newToken);
     setCurrentUser(user);
+    if (user.role === 'professional') {
+      setPortalMode('professional');
+    }
     notify('success', 'Autenticação Confirmada', `Bem-vinda(o), ${user.name} (${user.role.toUpperCase()}).`);
   };
+
+  const handleSaveAdminProfile = async (newAvatarUrl: string, newName?: string) => {
+    const res = await apiRequest<{ user: UserAccount }>('/api/auth/profile', 'PUT', {
+      avatarUrl: newAvatarUrl,
+      name: newName,
+    });
+    if (res && res.user) {
+      setCurrentUser(res.user);
+      notify(
+        'success',
+        'Perfil Atualizado',
+        'Sua foto e dados de identificação foram atualizados com sucesso.'
+      );
+      await refreshData();
+    }
+  };
+
+  if (portalMode === 'client') {
+    return (
+      <>
+        <ClientPortal
+          onSwitchToAdmin={() => setPortalMode('admin')}
+          onSwitchToProfessional={() => setPortalMode('professional')}
+          notify={notify}
+        />
+        <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+      </>
+    );
+  }
+
+  if (portalMode === 'professional') {
+    return (
+      <>
+        <ProfessionalPortal
+          currentUser={currentUser}
+          db={db}
+          isLoading={isLoading}
+          onLoginSuccess={handleLoginSuccess}
+          onLogout={handleLogout}
+          onSaveProfile={handleSaveAdminProfile}
+          apiRequest={apiRequest}
+          refreshData={refreshData}
+          notify={notify}
+          onOpenClientPortal={() => setPortalMode('client')}
+          onOpenAdminPortal={() => setPortalMode('admin')}
+        />
+        <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+      </>
+    );
+  }
 
   if (!token || (!isLoading && !currentUser)) {
     return (
       <>
-        <LoginScreen onLoginSuccess={handleLoginSuccess} />
+        <LoginScreen
+          onLoginSuccess={handleLoginSuccess}
+          onOpenClientPortal={() => setPortalMode('client')}
+          onOpenProfessionalPortal={() => setPortalMode('professional')}
+        />
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       </>
     );
@@ -324,20 +392,38 @@ export default function App() {
         </nav>
 
         <div className="p-4 border-t border-zinc-800/80 bg-zinc-950">
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <p className="text-xs font-semibold text-white truncate">
-                {currentUser?.name}
-              </p>
-              <p className="text-[11px] text-zinc-400 truncate">
-                Perfil: <span className="uppercase font-mono-num text-amber-400">{currentUser?.role}</span>
-              </p>
+          <div className="flex items-center justify-between gap-2.5">
+            <div className="flex items-center gap-3 min-w-0 flex-1">
+              <UserAvatar
+                name={currentUser?.name}
+                avatarUrl={currentUser?.avatarUrl}
+                size="md"
+                variant="dark"
+                showCameraBadge
+                onClick={() => setIsProfileModalOpen(true)}
+                title="Visualizar ou alterar minha foto de perfil"
+              />
+              <button
+                type="button"
+                onClick={() => setIsProfileModalOpen(true)}
+                className="min-w-0 text-left group cursor-pointer flex-1"
+                title="Clique para editar foto e perfil"
+              >
+                <p className="text-xs font-semibold text-white truncate group-hover:text-amber-300 transition-colors">
+                  {currentUser?.name}
+                </p>
+                <p className="text-[11px] text-zinc-400 truncate">
+                  <span className="uppercase font-mono-num text-amber-400 font-semibold">
+                    {formatRoleLabel(currentUser?.role)}
+                  </span>
+                </p>
+              </button>
             </div>
             <button
               type="button"
               onClick={handleLogout}
               title="Encerrar Sessão"
-              className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors cursor-pointer"
+              className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors cursor-pointer shrink-0"
             >
               <LogOut className="w-4 h-4" />
             </button>
@@ -402,15 +488,37 @@ export default function App() {
                 </div>
               ))}
             </nav>
-            <div className="p-4 border-t border-zinc-800 flex items-center justify-between">
-              <div className="text-xs">
-                <p className="font-semibold text-white">{currentUser?.name}</p>
-                <p className="text-zinc-400 uppercase font-mono-num text-[11px]">{currentUser?.role}</p>
+            <div className="p-4 border-t border-zinc-800 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-3 min-w-0">
+                <UserAvatar
+                  name={currentUser?.name}
+                  avatarUrl={currentUser?.avatarUrl}
+                  size="md"
+                  variant="dark"
+                  showCameraBadge
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    setIsProfileModalOpen(true);
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    setIsProfileModalOpen(true);
+                  }}
+                  className="text-xs text-left min-w-0 cursor-pointer"
+                >
+                  <p className="font-semibold text-white truncate">{currentUser?.name}</p>
+                  <p className="text-amber-400 uppercase font-mono-num text-[11px] truncate">
+                    {formatRoleLabel(currentUser?.role)}
+                  </p>
+                </button>
               </div>
               <button
                 type="button"
                 onClick={handleLogout}
-                className="px-3 py-1.5 text-xs font-medium text-white bg-zinc-800 rounded-lg"
+                className="px-3 py-1.5 text-xs font-medium text-white bg-zinc-800 rounded-lg shrink-0"
               >
                 Sair
               </button>
@@ -470,14 +578,46 @@ export default function App() {
             </button>
           </nav>
 
-          {/* Zone 3: 1 Primary Action */}
-          <div className="flex items-center gap-3 shrink-0">
+          {/* Zone 3: Primary Actions (Ver Portal da Cliente, Área do Profissional, Foto de Perfil & Trocar Operador) */}
+          <div className="flex items-center gap-2.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => setPortalMode('professional')}
+              className="px-3 py-2 text-xs font-medium text-zinc-800 bg-zinc-100 hover:bg-zinc-200 border border-zinc-200/80 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              Área do Profissional
+            </button>
+            <button
+              type="button"
+              onClick={() => setPortalMode('client')}
+              className="px-3.5 py-2 text-xs font-medium text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200/80 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              Área da Cliente
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsProfileModalOpen(true)}
+              className="hidden sm:inline-flex items-center gap-2 pl-2 pr-3 py-1.5 text-xs font-medium text-zinc-800 bg-zinc-100 hover:bg-zinc-200 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              title="Visualizar ou alterar minha foto de perfil"
+            >
+              <UserAvatar
+                name={currentUser?.name}
+                avatarUrl={currentUser?.avatarUrl}
+                size="xs"
+                variant="light"
+              />
+              <span>{currentUser?.name.split(' ')[0]}</span>
+              <span className="text-zinc-400">·</span>
+              <span className="font-mono-num text-[10px] uppercase text-amber-900 font-semibold">
+                {currentUser?.role}
+              </span>
+            </button>
             <button
               type="button"
               onClick={handleLogout}
-              className="px-3.5 py-2 text-xs font-medium text-zinc-800 bg-zinc-100 hover:bg-zinc-200 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              className="px-3 py-2 text-xs font-medium text-zinc-700 bg-zinc-100 hover:bg-zinc-200 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
-              Trocar Operador ({currentUser?.role.toUpperCase()})
+              Sair
             </button>
           </div>
         </header>
@@ -487,6 +627,18 @@ export default function App() {
           {renderActiveModule()}
         </main>
       </div>
+
+      {currentUser && (
+        <ProfilePhotoModal
+          isOpen={isProfileModalOpen}
+          onClose={() => setIsProfileModalOpen(false)}
+          userName={currentUser.name}
+          userEmail={currentUser.email}
+          userRoleLabel={formatRoleLabel(currentUser.role)}
+          currentAvatarUrl={currentUser.avatarUrl}
+          onSave={handleSaveAdminProfile}
+        />
+      )}
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>

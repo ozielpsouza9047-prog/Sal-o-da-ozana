@@ -25,6 +25,7 @@ export interface UserAccount {
   role: Role;
   status: 'active' | 'inactive' | 'blocked';
   phone: string;
+  avatarUrl?: string;
   lastLogin: string;
   twoFactorEnabled: boolean;
   permissions: ModuleId[];
@@ -38,6 +39,7 @@ export interface Client {
   phone: string;
   cpf: string;
   birthDate: string;
+  avatarUrl?: string;
   tier: 'Standard' | 'Gold' | 'Signature';
   totalSpent: number;
   visitsCount: number;
@@ -96,6 +98,7 @@ export interface Professional {
   specialty: string;
   email: string;
   phone: string;
+  avatarUrl?: string;
   documentRegistry: string;
   defaultCommission: number;
   workDays: string[];
@@ -122,6 +125,7 @@ export interface Appointment {
   status: 'scheduled' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled' | 'no_show';
   paymentStatus: 'pending' | 'paid';
   notes: string;
+  referencePhotos?: string[];
   createdAt: string;
 }
 
@@ -228,6 +232,32 @@ export interface NotificationItem {
   createdAt: string;
 }
 
+export interface BannerSlide {
+  id: string;
+  title: string;
+  subtitle: string;
+  ctaLabel: string;
+  imageUrl: string;
+  active: boolean;
+  order: number;
+}
+
+export interface WaitlistEntry {
+  id: string;
+  clientId: string;
+  clientName: string;
+  clientPhone: string;
+  serviceId: string;
+  serviceName: string;
+  professionalId: string;
+  professionalName: string;
+  desiredDate: string;
+  preferredPeriod: 'Manhã' | 'Tarde' | 'Noite' | 'Qualquer Horário';
+  notes: string;
+  status: 'waiting' | 'notified' | 'booked' | 'cancelled';
+  createdAt: string;
+}
+
 export interface SalonSettings {
   salonName: string;
   legalName: string;
@@ -252,6 +282,8 @@ export interface SalonSettings {
   sessionTimeoutMinutes: number;
   enforceStrongPassword: boolean;
   ipRestrictionEnabled: boolean;
+  cancellationNoticeHours?: number;
+  banners?: BannerSlide[];
 }
 
 export interface AppDatabase {
@@ -275,4 +307,5 @@ export interface AppDatabase {
   auditLogs: AuditLog[];
   notifications: NotificationItem[];
   settings: SalonSettings;
+  waitlist?: WaitlistEntry[];
 }

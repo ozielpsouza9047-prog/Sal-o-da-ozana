@@ -14,13 +14,73 @@ import type {
   CommissionEntry,
   CashFlowEntry,
   StockMovement,
+  BannerSlide,
+  WaitlistEntry,
+  Client,
 } from './src/types';
 
 const PORT = 3000;
 const DATA_DIR = path.resolve(process.cwd(), 'data');
+const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const DB_PATH = path.join(DATA_DIR, 'salon_db.json');
+const DB_BAK_PATH = path.join(DATA_DIR, 'salon_db.bak.json');
 const CREDENTIALS_PATH = path.join(DATA_DIR, 'credentials.json');
-const JWT_SECRET = process.env.SESSION_SECRET || 'lumina-atelier-hmac-secret-key-2026-secure';
+const CREDENTIALS_BAK_PATH = path.join(DATA_DIR, 'credentials.bak.json');
+
+const DEFAULT_FALLBACK_SECRET = 'lumina-atelier-hmac-secret-key-2026-secure';
+const JWT_SECRET = process.env.SESSION_SECRET || DEFAULT_FALLBACK_SECRET;
+const PASSWORD_SALT = process.env.PASSWORD_SALT || 'lumina_salt_2026';
+
+if (process.env.NODE_ENV === 'production' && (!process.env.SESSION_SECRET || process.env.SESSION_SECRET === DEFAULT_FALLBACK_SECRET || process.env.SESSION_SECRET.length < 32)) {
+  console.warn('[SECURITY GATE] SESSION_SECRET ausente ou fraco em produção. Configure uma chave >= 32 bytes.');
+}
+
+const DEMO_DEFAULT_PASSWORDS: Record<string, string> = {
+  'usr-1': 'Admin@2026',
+  'usr-2': 'Gerente@2026',
+  'usr-3': 'Recepcao@2026',
+  'usr-4': 'Prof@2026',
+};
+
+const DEFAULT_CLIENT_BANNERS: BannerSlide[] = [
+  {
+    id: 'bnr-1',
+    title: 'Alta Beleza & Visagismo Autoral nos Jardins',
+    subtitle: 'Protocolos exclusivos Kérastase, Wella Professionals e estética avançada com hora marcada.',
+    ctaLabel: 'Agendar Experiência',
+    imageUrl: '/src/assets/images/salon_banner_couture_interior_1793234470450.jpg',
+    active: true,
+    order: 1,
+  },
+  {
+    id: 'bnr-2',
+    title: 'Mechas Couture & Diagnóstico Capilar',
+    subtitle: 'Iluminação sob medida com preservação integral da fibra capilar e finalização de salão.',
+    ctaLabel: 'Reservar Horário',
+    imageUrl: '/src/assets/images/salon_banner_hair_ritual_1793234472028.jpg',
+    active: true,
+    order: 2,
+  },
+  {
+    id: 'bnr-3',
+    title: 'Rituais de Bem-Estar & Estética Facial',
+    subtitle: 'Dermocosméticos de alta performance e drenagem facial em suítes privativas.',
+    ctaLabel: 'Conhecer Protocolos',
+    imageUrl: '/src/assets/images/salon_banner_facial_spa_1793234472494.jpg',
+    active: true,
+    order: 3,
+  },
+];
+
+const WEEKDAY_MAP: Record<number, string> = {
+  0: 'Dom',
+  1: 'Seg',
+  2: 'Ter',
+  3: 'Qua',
+  4: 'Qui',
+  5: 'Sex',
+  6: 'Sáb',
+};
 
 const ALL_MODULES: ModuleId[] = [
   'overview',
@@ -72,22 +132,38 @@ const ROLE_DEFAULT_PERMISSIONS: Record<Role, ModuleId[]> = {
   professional: ['overview', 'agenda', 'clients', 'services', 'commissions', 'notifications'],
 };
 
-function hashPassword(password: string, salt = 'lumina_salt_2026'): string {
+function hashPassword(password: string, salt = PASSWORD_SALT): string {
   return crypto.scryptSync(password, salt, 64).toString('hex');
 }
 
-function signToken(payload: { userId: string; email: string; role: Role; exp: number }): string {
+function isStrongPassword(pw: string): boolean {
+  if (!pw || typeof pw !== 'string' || pw.length < 8) return false;
+  const hasUpper = /[A-Z]/.test(pw);
+  const hasLower = /[a-z]/.test(pw);
+  const hasDigit = /[0-9]/.test(pw);
+  const hasSpecial = /[^A-Za-z0-9]/.test(pw);
+  return hasUpper && hasLower && hasDigit && hasSpecial;
+}
+
+function timeToMinutes(t: string): number {
+  const [h, m] = (t || '00:00').split(':').map(Number);
+  return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
+}
+
+function signToken(payload: { userId: string; email: string; role: Role | 'client'; exp: number }): string {
   const data = Buffer.from(JSON.stringify(payload)).toString('base64url');
   const sig = crypto.createHmac('sha256', JWT_SECRET).update(data).digest('base64url');
   return `${data}.${sig}`;
 }
 
-function verifyToken(token: string): { userId: string; email: string; role: Role; exp: number } | null {
+function verifyToken(token: string): { userId: string; email: string; role: Role | 'client'; exp: number } | null {
   try {
     const [data, sig] = token.split('.');
     if (!data || !sig) return null;
     const expectedSig = crypto.createHmac('sha256', JWT_SECRET).update(data).digest('base64url');
-    if (sig !== expectedSig) return null;
+    const sigBuf = Buffer.from(sig);
+    const expBuf = Buffer.from(expectedSig);
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) return null;
     const payload = JSON.parse(Buffer.from(data, 'base64url').toString('utf8'));
     if (Date.now() > payload.exp) return null;
     return payload;
@@ -501,6 +577,10 @@ function getInitialDatabase(): AppDatabase {
         status: 'completed',
         paymentStatus: 'paid',
         notes: 'Fórmula: Blondor + Ox 20vol na raiz, tonalizante 9.89 Wella Illumina.',
+        referencePhotos: [
+          '/src/assets/images/salon_banner_hair_ritual_1793234472028.jpg',
+          '/src/assets/images/salon_banner_couture_interior_1793234470450.jpg',
+        ],
         createdAt: '2026-10-24T14:00:00Z',
       },
       {
@@ -519,6 +599,7 @@ function getInitialDatabase(): AppDatabase {
         status: 'in_progress',
         paymentStatus: 'pending',
         notes: 'Aplicar ampola Fusio-Dose complementar se necessário.',
+        referencePhotos: ['/src/assets/images/salon_banner_hair_ritual_1793234472028.jpg'],
         createdAt: '2026-10-25T10:00:00Z',
       },
       {
@@ -537,6 +618,7 @@ function getInitialDatabase(): AppDatabase {
         status: 'confirmed',
         paymentStatus: 'pending',
         notes: 'Manter comprimento e renovar camadas frontais.',
+        referencePhotos: ['/src/assets/images/salon_banner_hair_ritual_1793234472028.jpg'],
         createdAt: '2026-10-26T11:20:00Z',
       },
       {
@@ -906,63 +988,230 @@ function getInitialDatabase(): AppDatabase {
       sessionTimeoutMinutes: 480,
       enforceStrongPassword: true,
       ipRestrictionEnabled: false,
+      cancellationNoticeHours: 4,
+      banners: DEFAULT_CLIENT_BANNERS,
     },
+    waitlist: [],
   };
+}
+
+function atomicWriteJson(targetPath: string, backupPath: string, dataObj: unknown) {
+  const serialized = JSON.stringify(dataObj, null, 2);
+  const tmpPath = `${targetPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 7)}.tmp`;
+  fs.writeFileSync(tmpPath, serialized, { encoding: 'utf8', mode: 0o600 });
+  if (fs.existsSync(targetPath)) {
+    try {
+      fs.copyFileSync(targetPath, backupPath);
+    } catch {
+      // ignore copy error if concurrent
+    }
+  }
+  fs.renameSync(tmpPath, targetPath);
 }
 
 function ensureStorage(): { db: AppDatabase; credentials: Record<string, string> } {
   if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
+  }
+  if (!fs.existsSync(BACKUP_DIR)) {
+    fs.mkdirSync(BACKUP_DIR, { recursive: true, mode: 0o700 });
   }
   let db: AppDatabase;
   if (!fs.existsSync(DB_PATH)) {
     db = getInitialDatabase();
-    fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), 'utf8');
+    atomicWriteJson(DB_PATH, DB_BAK_PATH, db);
   } else {
     try {
       db = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
     } catch {
-      db = getInitialDatabase();
-      fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), 'utf8');
+      // Automatic recovery from last valid backup before falling back to initial
+      if (fs.existsSync(DB_BAK_PATH)) {
+        try {
+          db = JSON.parse(fs.readFileSync(DB_BAK_PATH, 'utf8'));
+          atomicWriteJson(DB_PATH, DB_BAK_PATH, db);
+        } catch {
+          db = getInitialDatabase();
+          atomicWriteJson(DB_PATH, DB_BAK_PATH, db);
+        }
+      } else {
+        db = getInitialDatabase();
+        atomicWriteJson(DB_PATH, DB_BAK_PATH, db);
+      }
     }
+  }
+
+  let dbChanged = false;
+  if (!Array.isArray(db.settings.banners) || db.settings.banners.length === 0) {
+    db.settings.banners = DEFAULT_CLIENT_BANNERS;
+    dbChanged = true;
+  }
+  if (db.settings.cancellationNoticeHours === undefined) {
+    db.settings.cancellationNoticeHours = 4;
+    dbChanged = true;
+  }
+  if (!Array.isArray(db.waitlist)) {
+    db.waitlist = [];
+    dbChanged = true;
+  }
+
+  // Ensure existing appointments have referencePhotos array and seed non-destructive test states for prf-1
+  const todayStr = new Date().toISOString().split('T')[0];
+  const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+  for (const apt of db.appointments) {
+    if (!Array.isArray(apt.referencePhotos)) {
+      if (apt.id === 'apt-1') {
+        apt.referencePhotos = [
+          '/src/assets/images/salon_banner_hair_ritual_1793234472028.jpg',
+          '/src/assets/images/salon_banner_couture_interior_1793234470450.jpg',
+        ];
+      } else if (apt.id === 'apt-3') {
+        apt.referencePhotos = ['/src/assets/images/salon_banner_hair_ritual_1793234472028.jpg'];
+      } else if (apt.id === 'apt-4') {
+        apt.referencePhotos = ['/src/assets/images/salon_banner_facial_spa_1793234472494.jpg'];
+      } else {
+        apt.referencePhotos = [];
+      }
+      dbChanged = true;
+    }
+  }
+
+  if (!db.appointments.some((a) => a.id === 'apt-prof-inprog')) {
+    db.appointments.push({
+      id: 'apt-prof-inprog',
+      clientId: 'cli-1',
+      clientName: 'Beatriz Monteiro de Barros',
+      clientPhone: '(11) 99410-2211',
+      professionalId: 'prf-1',
+      professionalName: 'Rafael Albuquerque',
+      serviceId: 'srv-3',
+      serviceName: 'Ritual Chronologiste Kérastase',
+      date: todayStr,
+      startTime: '13:30',
+      endTime: '14:45',
+      price: 490.0,
+      status: 'in_progress',
+      paymentStatus: 'pending',
+      notes: 'Cadeira 01: Enxágue morno e massagem capilar relaxante com óleo perfumado.',
+      referencePhotos: [
+        '/src/assets/images/salon_banner_hair_ritual_1793234472028.jpg',
+        '/src/assets/images/salon_banner_facial_spa_1793234472494.jpg',
+      ],
+      createdAt: new Date(Date.now() - 3600000 * 5).toISOString(),
+    });
+    dbChanged = true;
+  }
+
+  if (!db.appointments.some((a) => a.id === 'apt-prof-next')) {
+    db.appointments.push({
+      id: 'apt-prof-next',
+      clientId: 'cli-5',
+      clientName: 'Gabriela Peixoto Nogueira',
+      clientPhone: '(11) 98219-6045',
+      professionalId: 'prf-1',
+      professionalName: 'Rafael Albuquerque',
+      serviceId: 'srv-1',
+      serviceName: 'Mechas Contour & Balayage Couture',
+      date: tomorrowStr,
+      startTime: '10:30',
+      endTime: '13:30',
+      price: 980.0,
+      status: 'confirmed',
+      paymentStatus: 'pending',
+      notes: 'Cliente enviou fotos de referência para iluminação frontal em tom mel dourado.',
+      referencePhotos: ['/src/assets/images/salon_banner_hair_ritual_1793234472028.jpg'],
+      createdAt: new Date(Date.now() - 3600000 * 12).toISOString(),
+    });
+    dbChanged = true;
+  }
+
+  if (!db.appointments.some((a) => a.id === 'apt-prof-canc')) {
+    db.appointments.push({
+      id: 'apt-prof-canc',
+      clientId: 'cli-3',
+      clientName: 'Fernanda Siqueira Lima',
+      clientPhone: '(11) 99104-5567',
+      professionalId: 'prf-1',
+      professionalName: 'Rafael Albuquerque',
+      serviceId: 'srv-2',
+      serviceName: 'Corte Autoral & Escova Modelada',
+      date: todayStr,
+      startTime: '18:00',
+      endTime: '19:00',
+      price: 320.0,
+      status: 'cancelled',
+      paymentStatus: 'pending',
+      notes: 'Cancelado com antecedência pela cliente devido a viagem corporativa (reagendado para 16:00).',
+      referencePhotos: [],
+      createdAt: new Date(Date.now() - 3600000 * 24).toISOString(),
+    });
+    dbChanged = true;
+  }
+
+  if (dbChanged) {
+    atomicWriteJson(DB_PATH, DB_BAK_PATH, db);
   }
 
   let credentials: Record<string, string>;
   if (!fs.existsSync(CREDENTIALS_PATH)) {
     credentials = {
-      'usr-1': hashPassword('Admin@2026'),
-      'usr-2': hashPassword('Gerente@2026'),
-      'usr-3': hashPassword('Recepcao@2026'),
-      'usr-4': hashPassword('Prof@2026'),
+      'usr-1': hashPassword(DEMO_DEFAULT_PASSWORDS['usr-1']),
+      'usr-2': hashPassword(DEMO_DEFAULT_PASSWORDS['usr-2']),
+      'usr-3': hashPassword(DEMO_DEFAULT_PASSWORDS['usr-3']),
+      'usr-4': hashPassword(DEMO_DEFAULT_PASSWORDS['usr-4']),
+      'cli-1': hashPassword('Cliente@2026'),
+      'cli-2': hashPassword('Cliente@2026'),
+      'cli-3': hashPassword('Cliente@2026'),
     };
-    fs.writeFileSync(CREDENTIALS_PATH, JSON.stringify(credentials, null, 2), 'utf8');
+    atomicWriteJson(CREDENTIALS_PATH, CREDENTIALS_BAK_PATH, credentials);
   } else {
     try {
       credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, 'utf8'));
     } catch {
-      credentials = {
-        'usr-1': hashPassword('Admin@2026'),
-        'usr-2': hashPassword('Gerente@2026'),
-        'usr-3': hashPassword('Recepcao@2026'),
-        'usr-4': hashPassword('Prof@2026'),
-      };
-      fs.writeFileSync(CREDENTIALS_PATH, JSON.stringify(credentials, null, 2), 'utf8');
+      if (fs.existsSync(CREDENTIALS_BAK_PATH)) {
+        try {
+          credentials = JSON.parse(fs.readFileSync(CREDENTIALS_BAK_PATH, 'utf8'));
+          atomicWriteJson(CREDENTIALS_PATH, CREDENTIALS_BAK_PATH, credentials);
+        } catch {
+          credentials = {
+            'usr-1': hashPassword(DEMO_DEFAULT_PASSWORDS['usr-1']),
+            'usr-2': hashPassword(DEMO_DEFAULT_PASSWORDS['usr-2']),
+            'usr-3': hashPassword(DEMO_DEFAULT_PASSWORDS['usr-3']),
+            'usr-4': hashPassword(DEMO_DEFAULT_PASSWORDS['usr-4']),
+            'cli-1': hashPassword('Cliente@2026'),
+          };
+          atomicWriteJson(CREDENTIALS_PATH, CREDENTIALS_BAK_PATH, credentials);
+        }
+      } else {
+        credentials = {
+          'usr-1': hashPassword(DEMO_DEFAULT_PASSWORDS['usr-1']),
+          'usr-2': hashPassword(DEMO_DEFAULT_PASSWORDS['usr-2']),
+          'usr-3': hashPassword(DEMO_DEFAULT_PASSWORDS['usr-3']),
+          'usr-4': hashPassword(DEMO_DEFAULT_PASSWORDS['usr-4']),
+          'cli-1': hashPassword('Cliente@2026'),
+        };
+        atomicWriteJson(CREDENTIALS_PATH, CREDENTIALS_BAK_PATH, credentials);
+      }
     }
+  }
+  if (!credentials['cli-1']) {
+    credentials['cli-1'] = hashPassword('Cliente@2026');
+    atomicWriteJson(CREDENTIALS_PATH, CREDENTIALS_BAK_PATH, credentials);
   }
 
   return { db, credentials };
 }
 
 function saveDb(db: AppDatabase) {
-  fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), 'utf8');
+  atomicWriteJson(DB_PATH, DB_BAK_PATH, db);
 }
 
 function saveCredentials(credentials: Record<string, string>) {
-  fs.writeFileSync(CREDENTIALS_PATH, JSON.stringify(credentials, null, 2), 'utf8');
+  atomicWriteJson(CREDENTIALS_PATH, CREDENTIALS_BAK_PATH, credentials);
 }
 
 interface AuthenticatedRequest extends Request {
   user?: UserAccount;
+  client?: Client;
 }
 
 async function startServer() {
@@ -1111,6 +1360,31 @@ async function startServer() {
       return;
     }
 
+    // Block default demo passwords if DISABLE_DEMO_ACCOUNTS is active or in production
+    const isUsingDefaultDemoPassword =
+      DEMO_DEFAULT_PASSWORDS[user.id] &&
+      expectedHash === hashPassword(DEMO_DEFAULT_PASSWORDS[user.id]);
+
+    if (
+      isUsingDefaultDemoPassword &&
+      (process.env.DISABLE_DEMO_ACCOUNTS === 'true' || process.env.NODE_ENV === 'production')
+    ) {
+      logAudit(
+        user,
+        'AUTH_DEMO_CREDENTIAL_BLOCKED',
+        'security',
+        `Login bloqueado em produção: a conta ${user.email} ainda utiliza a senha demonstrativa padrão.`,
+        'critical',
+        user.id,
+        req
+      );
+      res.status(403).json({
+        error:
+          'Bloqueio de Segurança de Produção: Credenciais demonstrativas padrão não são permitidas em produção. Redefina as senhas dos operadores.',
+      });
+      return;
+    }
+
     user.lastLogin = new Date().toISOString();
     saveDb(db);
 
@@ -1131,22 +1405,201 @@ async function startServer() {
       req
     );
 
-    res.json({ token, user });
+    res.json({ token, user, mustChangeDefaultPassword: Boolean(isUsingDefaultDemoPassword) });
   });
 
   app.get('/api/auth/me', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     res.json({ user: req.user });
   });
 
-  // --- BOOTSTRAP DATA ROUTE (Filtered by user permissions) ---
+  function validateAvatarInput(avatarUrl: unknown): { valid: boolean; sanitized?: string; error?: string } {
+    if (avatarUrl === undefined) return { valid: true };
+    if (avatarUrl === null || avatarUrl === '') return { valid: true, sanitized: '' };
+    if (typeof avatarUrl !== 'string') {
+      return { valid: false, error: 'Formato de imagem de perfil inválido.' };
+    }
+    const trimmed = avatarUrl.trim();
+    if (trimmed.length > 900_000) {
+      return { valid: false, error: 'A imagem de perfil excede o tamanho máximo permitido (máx. 800KB).' };
+    }
+    const isAllowed =
+      trimmed === '' ||
+      trimmed.startsWith('data:image/') ||
+      trimmed.startsWith('https://') ||
+      trimmed.startsWith('http://') ||
+      trimmed.startsWith('/');
+    if (!isAllowed) {
+      return { valid: false, error: 'URL ou formato de foto de perfil não suportado.' };
+    }
+    return { valid: true, sanitized: trimmed };
+  }
+
+  function getLinkedProfessional(user: UserAccount) {
+    return db.professionals.find(
+      (p) =>
+        p.email.toLowerCase() === user.email.toLowerCase() ||
+        p.name.toLowerCase() === user.name.toLowerCase()
+    );
+  }
+
+  function validateReferencePhotosInput(
+    photos: unknown
+  ): { valid: boolean; sanitized?: string[]; error?: string } {
+    if (photos === undefined) return { valid: true };
+    if (!Array.isArray(photos)) {
+      return { valid: false, error: 'As fotos de referência devem ser enviadas em formato de lista.' };
+    }
+    if (photos.length > 6) {
+      return { valid: false, error: 'É permitido anexar no máximo 6 fotos de referência por atendimento.' };
+    }
+    const sanitized: string[] = [];
+    for (const item of photos) {
+      const check = validateAvatarInput(item);
+      if (!check.valid) {
+        return { valid: false, error: check.error || 'Foto de referência inválida.' };
+      }
+      if (check.sanitized) {
+        sanitized.push(check.sanitized);
+      }
+    }
+    return { valid: true, sanitized };
+  }
+
+  // Self-profile update for authenticated ADM/Professional user (Strictly own profile only)
+  app.put('/api/auth/profile', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const currentUser = req.user!;
+    const { id, userId, targetUserId, name, phone, avatarUrl } = req.body;
+
+    // Prevent modifying another user's profile without admin authorization
+    const requestedTargetId = id || userId || targetUserId;
+    if (requestedTargetId && requestedTargetId !== currentUser.id && currentUser.role !== 'admin') {
+      logAudit(
+        currentUser,
+        'ACCESS_DENIED_PROFILE_TAMPER',
+        'security',
+        `Bloqueado: operador '${currentUser.email}' (${currentUser.role}) tentou alterar perfil de outro usuário (${requestedTargetId}).`,
+        'warning',
+        requestedTargetId,
+        req
+      );
+      res.status(403).json({
+        error: 'Permissão negada: você não possui autorização para alterar o perfil de outro usuário.',
+      });
+      return;
+    }
+
+    const targetId =
+      requestedTargetId && currentUser.role === 'admin' ? requestedTargetId : currentUser.id;
+    const targetUser = db.users.find((u) => u.id === targetId);
+    if (!targetUser) {
+      res.status(404).json({ error: 'Usuário não encontrado.' });
+      return;
+    }
+
+    const avatarCheck = validateAvatarInput(avatarUrl);
+    if (!avatarCheck.valid) {
+      res.status(400).json({ error: avatarCheck.error });
+      return;
+    }
+
+    const linkedProf = getLinkedProfessional(targetUser);
+
+    if (name !== undefined) {
+      if (typeof name !== 'string' || name.trim().length < 3) {
+        res.status(400).json({ error: 'O nome deve possuir pelo menos 3 caracteres.' });
+        return;
+      }
+      targetUser.name = name.trim();
+      if (linkedProf) {
+        linkedProf.name = name.trim();
+      }
+    }
+    if (phone !== undefined && typeof phone === 'string') {
+      targetUser.phone = phone.trim();
+      if (linkedProf) {
+        linkedProf.phone = phone.trim();
+      }
+    }
+    if (avatarCheck.sanitized !== undefined) {
+      targetUser.avatarUrl = avatarCheck.sanitized;
+      if (linkedProf) {
+        linkedProf.avatarUrl = avatarCheck.sanitized;
+      }
+    }
+
+    saveDb(db);
+    logAudit(
+      currentUser,
+      'USER_PROFILE_UPDATED',
+      'auth',
+      `Foto/dados de perfil de '${targetUser.name}' (${targetUser.role}) atualizados.`,
+      'info',
+      targetUser.id,
+      req
+    );
+    res.json({ user: targetUser });
+  });
+
+  // --- BOOTSTRAP DATA ROUTE (Filtered by user permissions, professional scope & LGPD PII masking) ---
   app.get('/api/bootstrap', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const user = req.user!;
     const canSeeUsers = user.permissions.includes('users') || user.role === 'admin';
     const canSeeSecurity = user.permissions.includes('security') || user.role === 'admin';
+    const canSeeFullPII = ['admin', 'manager', 'receptionist'].includes(user.role);
+
+    if (user.role === 'professional') {
+      const linkedProf = getLinkedProfessional(user);
+      const myAppointments = linkedProf
+        ? db.appointments.filter((a) => a.professionalId === linkedProf.id)
+        : [];
+      const authorizedClientIds = new Set(myAppointments.map((a) => a.clientId));
+      const authorizedClients = db.clients
+        .filter((c) => authorizedClientIds.has(c.id))
+        .map((c) => ({
+          ...c,
+          cpf: c.cpf ? '***.***.***-**' : '',
+          email: c.email ? c.email.replace(/^(..).*(@.*)$/, '$1***$2') : '',
+          phone: c.phone ? c.phone.replace(/(\(\d{2}\)\s?\d{2})\d{3}(-\d{4})/, '$1***$2') : '',
+          totalSpent: 0,
+        }));
+      const myCommissions = linkedProf
+        ? db.commissions.filter((cm) => cm.professionalId === linkedProf.id)
+        : [];
+
+      res.json({
+        user,
+        linkedProfessionalId: linkedProf?.id || null,
+        clients: authorizedClients,
+        services: db.services,
+        products: [],
+        stockMovements: [],
+        professionals: linkedProf ? [linkedProf] : [],
+        appointments: myAppointments,
+        sales: [],
+        cashFlow: [],
+        cashRegister: db.cashRegister,
+        accounts: [],
+        commissions: myCommissions,
+        auditLogs: [],
+        notifications: db.notifications.filter((n) => n.category === 'agenda'),
+        settings: db.settings,
+        users: [user],
+        waitlist: (db.waitlist || []).filter(
+          (w) => linkedProf && (w.professionalId === linkedProf.id || w.professionalId === 'any')
+        ),
+      });
+      return;
+    }
 
     res.json({
       user,
-      clients: db.clients,
+      clients: canSeeFullPII
+        ? db.clients
+        : db.clients.map((c) => ({
+            ...c,
+            cpf: c.cpf ? '***.***.***-**' : '',
+            email: c.email ? c.email.replace(/^(..).*(@.*)$/, '$1***$2') : '',
+          })),
       services: db.services,
       products: db.products,
       stockMovements: db.stockMovements,
@@ -1166,6 +1619,7 @@ async function startServer() {
             ...u,
             phone: '***',
           })),
+      waitlist: db.waitlist || [],
     });
   });
 
@@ -1481,7 +1935,34 @@ async function startServer() {
 
   // --- AGENDA / APPOINTMENTS ---
   app.post('/api/appointments', requireAuth, requireModulePermission('agenda'), (req: AuthenticatedRequest, res: Response) => {
-    const { clientId, professionalId, serviceId, date, startTime, notes, status } = req.body;
+    const { clientId, professionalId, serviceId, date, startTime, notes, status, referencePhotos } = req.body;
+    const currentUser = req.user!;
+
+    if (currentUser.role === 'professional') {
+      const linkedProf = getLinkedProfessional(currentUser);
+      if (!linkedProf || professionalId !== linkedProf.id) {
+        logAudit(
+          currentUser,
+          'ACCESS_DENIED_PROFESSIONAL_SCOPE',
+          'security',
+          `Bloqueado: profissional '${currentUser.name}' tentou criar agendamento em nome de outro especialista (${professionalId}).`,
+          'warning',
+          professionalId,
+          req
+        );
+        res.status(403).json({
+          error: 'Permissão negada: você só possui autorização para registrar atendimentos em sua própria agenda.',
+        });
+        return;
+      }
+    }
+
+    const photosCheck = validateReferencePhotosInput(referencePhotos);
+    if (!photosCheck.valid) {
+      res.status(400).json({ error: photosCheck.error });
+      return;
+    }
+
     const client = db.clients.find((c) => c.id === clientId);
     const prof = db.professionals.find((p) => p.id === professionalId);
     const srv = db.services.find((s) => s.id === serviceId);
@@ -1493,22 +1974,28 @@ async function startServer() {
 
     // Calculate endTime
     const [hh, mm] = startTime.split(':').map(Number);
-    const totalMinutes = hh * 60 + mm + srv.durationMinutes;
-    const endH = String(Math.floor(totalMinutes / 60) % 24).padStart(2, '0');
-    const endM = String(totalMinutes % 60).padStart(2, '0');
+    if (isNaN(hh) || isNaN(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+      res.status(400).json({ error: 'Formato de horário inválido (use HH:mm).' });
+      return;
+    }
+    const newStartMin = hh * 60 + mm;
+    const newEndMin = newStartMin + srv.durationMinutes;
+    const endH = String(Math.floor(newEndMin / 60) % 24).padStart(2, '0');
+    const endM = String(newEndMin % 60).padStart(2, '0');
     const endTime = `${endH}:${endM}`;
 
-    // Conflict check for same professional on same date
-    const conflict = db.appointments.find(
-      (a) =>
-        a.professionalId === professionalId &&
-        a.date === date &&
-        a.status !== 'cancelled' &&
-        a.startTime === startTime
-    );
+    // Full time-window overlap check for same professional on same date
+    const conflict = db.appointments.find((a) => {
+      if (a.professionalId !== professionalId || a.date !== date || a.status === 'cancelled') {
+        return false;
+      }
+      const existStart = timeToMinutes(a.startTime);
+      const existEnd = timeToMinutes(a.endTime);
+      return newStartMin < existEnd && newEndMin > existStart;
+    });
     if (conflict) {
       res.status(409).json({
-        error: `Conflito de agenda: ${prof.name} já possui agendamento às ${startTime} (${conflict.clientName}).`,
+        error: `Conflito de agenda: ${prof.name} já possui atendimento das ${conflict.startTime} às ${conflict.endTime} (${conflict.clientName}).`,
       });
       return;
     }
@@ -1529,6 +2016,7 @@ async function startServer() {
       status: status || 'scheduled',
       paymentStatus: 'pending' as const,
       notes: (notes || '').trim(),
+      referencePhotos: photosCheck.sanitized || [],
       createdAt: new Date().toISOString(),
     };
 
@@ -1538,7 +2026,7 @@ async function startServer() {
       req.user!,
       'APPOINTMENT_CREATED',
       'agenda',
-      `Agendamento criado: ${client.name} com ${prof.name} (${srv.name}) em ${date} às ${startTime}.`,
+      `Agendamento criado: ${client.name} com ${prof.name} (${srv.name}) em ${date} das ${startTime} às ${endTime}.`,
       'info',
       apt.id,
       req
@@ -1552,7 +2040,78 @@ async function startServer() {
       res.status(404).json({ error: 'Agendamento não encontrado.' });
       return;
     }
-    db.appointments[idx] = { ...db.appointments[idx], ...req.body, id: db.appointments[idx].id };
+    const current = db.appointments[idx];
+    const currentUser = req.user!;
+
+    // Strict RBAC isolation for professionals: only own appointments can be accessed/updated
+    if (currentUser.role === 'professional') {
+      const linkedProf = getLinkedProfessional(currentUser);
+      if (
+        !linkedProf ||
+        current.professionalId !== linkedProf.id ||
+        (req.body.professionalId && req.body.professionalId !== linkedProf.id)
+      ) {
+        logAudit(
+          currentUser,
+          'ACCESS_DENIED_PROFESSIONAL_SCOPE',
+          'security',
+          `Bloqueado: profissional '${currentUser.name}' tentou alterar atendimento '${current.id}' pertencente a '${current.professionalName}'.`,
+          'warning',
+          current.id,
+          req
+        );
+        res.status(403).json({
+          error: 'Permissão negada: você só possui autorização para acessar e gerenciar seus próprios atendimentos.',
+        });
+        return;
+      }
+    }
+
+    const photosCheck = validateReferencePhotosInput(req.body.referencePhotos);
+    if (!photosCheck.valid) {
+      res.status(400).json({ error: photosCheck.error });
+      return;
+    }
+
+    const targetProfId = req.body.professionalId || current.professionalId;
+    const targetDate = req.body.date || current.date;
+    const targetStartTime = req.body.startTime || current.startTime;
+    const targetServiceId = req.body.serviceId || current.serviceId;
+    const targetStatus = req.body.status || current.status;
+
+    const srv = db.services.find((s) => s.id === targetServiceId);
+    const duration = srv ? srv.durationMinutes : 60;
+    const newStartMin = timeToMinutes(targetStartTime);
+    const newEndMin = newStartMin + duration;
+    const endH = String(Math.floor(newEndMin / 60) % 24).padStart(2, '0');
+    const endM = String(newEndMin % 60).padStart(2, '0');
+    const computedEndTime = req.body.startTime || req.body.serviceId ? `${endH}:${endM}` : current.endTime;
+
+    if (targetStatus !== 'cancelled') {
+      const conflict = db.appointments.find((a) => {
+        if (a.id === current.id || a.professionalId !== targetProfId || a.date !== targetDate || a.status === 'cancelled') {
+          return false;
+        }
+        const existStart = timeToMinutes(a.startTime);
+        const existEnd = timeToMinutes(a.endTime);
+        return newStartMin < existEnd && newEndMin > existStart;
+      });
+      if (conflict) {
+        res.status(409).json({
+          error: `Conflito de agenda na edição: horário colide com atendimento das ${conflict.startTime} às ${conflict.endTime} (${conflict.clientName}).`,
+        });
+        return;
+      }
+    }
+
+    db.appointments[idx] = {
+      ...current,
+      ...req.body,
+      referencePhotos:
+        photosCheck.sanitized !== undefined ? photosCheck.sanitized : current.referencePhotos || [],
+      endTime: computedEndTime,
+      id: current.id,
+    };
     saveDb(db);
     logAudit(
       req.user!,
@@ -1588,28 +2147,46 @@ async function startServer() {
     const client = db.clients.find((c) => c.id === clientId);
     const clientName = client ? client.name : 'Cliente Avulso';
 
-    // Validate product stock if autoDeductStockOnSale is enabled
+    // Validate item quantities & prices before processing sale
+    for (const it of items) {
+      const qty = Number(it.quantity);
+      const uPrice = Number(it.unitPrice);
+      if (!Number.isFinite(qty) || qty <= 0 || !Number.isFinite(uPrice) || uPrice < 0) {
+        res.status(400).json({ error: 'Quantidade e preço unitário dos itens devem ser números positivos válidos.' });
+        return;
+      }
+    }
+
+    // Validate product stock if autoDeductStockOnSale is enabled (aggregating duplicate product lines)
     if (db.settings.autoDeductStockOnSale) {
+      const requestedByProduct: Record<string, number> = {};
       for (const item of items) {
         if (item.type === 'product') {
-          const prd = db.products.find((p) => p.id === item.referenceId);
-          if (!prd) {
-            res.status(400).json({ error: `Produto '${item.name}' não encontrado no catálogo.` });
-            return;
-          }
-          if (prd.stock < item.quantity) {
-            res.status(400).json({
-              error: `Estoque insuficiente para '${prd.name}': disponível ${prd.stock}, solicitado ${item.quantity}.`,
-            });
-            return;
-          }
+          requestedByProduct[item.referenceId] = (requestedByProduct[item.referenceId] || 0) + Number(item.quantity);
+        }
+      }
+      for (const [prdId, totalReqQty] of Object.entries(requestedByProduct)) {
+        const prd = db.products.find((p) => p.id === prdId);
+        if (!prd) {
+          res.status(400).json({ error: `Produto (${prdId}) não encontrado no catálogo.` });
+          return;
+        }
+        if (prd.stock < totalReqQty) {
+          res.status(400).json({
+            error: `Estoque insuficiente para '${prd.name}': disponível ${prd.stock}, solicitado ${totalReqQty}.`,
+          });
+          return;
         }
       }
     }
 
     const subtotal = items.reduce((acc: number, it: any) => acc + Number(it.unitPrice) * Number(it.quantity), 0);
-    const numDiscount = Math.max(0, Number(discount || 0));
-    const total = Math.max(0, subtotal - numDiscount);
+    const numDiscount = Number(discount || 0);
+    if (!Number.isFinite(numDiscount) || numDiscount < 0 || numDiscount > subtotal) {
+      res.status(400).json({ error: 'Desconto inválido: não pode ser negativo nem superior ao subtotal da venda.' });
+      return;
+    }
+    const total = Math.max(0, Number((subtotal - numDiscount).toFixed(2)));
     const saleCode = `VND-${1000 + db.sales.length + 1}`;
     const today = getTodayStr();
 
@@ -1626,10 +2203,10 @@ async function startServer() {
         professionalName: it.professionalName,
         quantity: Number(it.quantity),
         unitPrice: Number(it.unitPrice),
-        totalPrice: Number(it.unitPrice) * Number(it.quantity),
+        totalPrice: Number((Number(it.unitPrice) * Number(it.quantity)).toFixed(2)),
       })),
-      subtotal,
-      discount: numDiscount,
+      subtotal: Number(subtotal.toFixed(2)),
+      discount: Number(numDiscount.toFixed(2)),
       total,
       paymentMethod: paymentMethod || 'PIX',
       installments: Number(installments || 1),
@@ -1643,7 +2220,7 @@ async function startServer() {
 
     // Update Client stats
     if (client) {
-      client.totalSpent += total;
+      client.totalSpent = Number((client.totalSpent + total).toFixed(2));
       client.visitsCount += 1;
       client.lastVisit = today;
       if (client.totalSpent >= 4500) client.tier = 'Signature';
@@ -1684,8 +2261,9 @@ async function startServer() {
       }
     }
 
-    // Generate Commissions
+    // Generate Commissions (proportional to net discount ratio)
     if (db.settings.autoGenerateCommission) {
+      const discountRatio = subtotal > 0 ? total / subtotal : 1;
       for (const item of newSale.items) {
         if (item.professionalId) {
           const prof = db.professionals.find((p) => p.id === item.professionalId);
@@ -1698,7 +2276,8 @@ async function startServer() {
             } else {
               rate = 10; // 10% retail commission
             }
-            const commAmount = Number(((item.totalPrice * rate) / 100).toFixed(2));
+            const netItemBase = Number((item.totalPrice * discountRatio).toFixed(2));
+            const commAmount = Number(((netItemBase * rate) / 100).toFixed(2));
             const comm: CommissionEntry = {
               id: `com-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
               professionalId: prof.id,
@@ -1707,7 +2286,7 @@ async function startServer() {
               saleCode: newSale.code,
               itemName: item.name,
               saleDate: today,
-              grossAmount: item.totalPrice,
+              grossAmount: netItemBase,
               commissionPercentage: rate,
               commissionAmount: commAmount,
               status: 'pending',
@@ -1758,6 +2337,53 @@ async function startServer() {
     }
     sale.status = 'refunded';
 
+    // Restore product stock & log Kardex return movement
+    if (db.settings.autoDeductStockOnSale) {
+      for (const item of sale.items) {
+        if (item.type === 'product') {
+          const prd = db.products.find((p) => p.id === item.referenceId);
+          if (prd) {
+            const prev = prd.stock;
+            prd.stock = prev + item.quantity;
+            db.stockMovements.unshift({
+              id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+              productId: prd.id,
+              productName: prd.name,
+              type: 'in',
+              quantity: item.quantity,
+              previousStock: prev,
+              newStock: prd.stock,
+              reason: `Devolução de estoque por estorno PDV #${sale.code}`,
+              performedBy: req.user!.name,
+              createdAt: new Date().toISOString(),
+            });
+          }
+        } else if (item.type === 'service' && item.professionalId) {
+          const prof = db.professionals.find((p) => p.id === item.professionalId);
+          if (prof && prof.completedAppointments > 0) {
+            prof.completedAppointments -= 1;
+          }
+        }
+      }
+    }
+
+    // Reverse Client stats
+    if (sale.clientId && sale.clientId !== 'walk-in') {
+      const client = db.clients.find((c) => c.id === sale.clientId);
+      if (client) {
+        client.totalSpent = Math.max(0, Number((client.totalSpent - sale.total).toFixed(2)));
+        client.visitsCount = Math.max(0, client.visitsCount - 1);
+      }
+    }
+
+    // Reverse linked appointment paymentStatus if any
+    if (sale.appointmentId) {
+      const apt = db.appointments.find((a) => a.id === sale.appointmentId);
+      if (apt) {
+        apt.paymentStatus = 'pending';
+      }
+    }
+
     // Reverse CashFlow
     db.cashFlow.unshift({
       id: `cf-${Date.now()}`,
@@ -1772,7 +2398,7 @@ async function startServer() {
       createdAt: new Date().toISOString(),
     });
 
-    // Remove pending commissions from this sale
+    // Remove commissions from this sale
     db.commissions = db.commissions.filter((c) => c.saleId !== sale.id);
 
     saveDb(db);
@@ -1780,7 +2406,7 @@ async function startServer() {
       req.user!,
       'SALE_REFUNDED',
       'sales',
-      `Venda #${sale.code} (R$ ${sale.total.toFixed(2)}) estornada por ${req.user!.name}.`,
+      `Venda #${sale.code} (R$ ${sale.total.toFixed(2)}) estornada com devolução de estoque e reversão financeira por ${req.user!.name}.`,
       'critical',
       sale.id,
       req
@@ -1983,8 +2609,14 @@ async function startServer() {
   // --- USERS & RBAC MANAGEMENT ---
   app.post('/api/users', requireAuth, requireModulePermission('users', ['admin']), (req: AuthenticatedRequest, res: Response) => {
     const { name, email, password, role, phone, twoFactorEnabled, permissions } = req.body;
-    if (!name || !email || !password || password.length < 6) {
-      res.status(400).json({ error: 'Nome, e-mail e senha (mínimo 6 caracteres) são obrigatórios.' });
+    if (!name || !email || !password) {
+      res.status(400).json({ error: 'Nome, e-mail e senha são obrigatórios.' });
+      return;
+    }
+    if (db.settings.enforceStrongPassword && !isStrongPassword(password)) {
+      res.status(400).json({
+        error: 'Política de Senha Forte: a senha deve ter no mínimo 8 caracteres, incluindo letra maiúscula, minúscula, número e símbolo.',
+      });
       return;
     }
     if (db.users.some((u) => u.email.toLowerCase() === email.trim().toLowerCase())) {
@@ -2018,10 +2650,25 @@ async function startServer() {
       res.status(404).json({ error: 'Usuário não encontrado.' });
       return;
     }
-    const { name, role, status, phone, twoFactorEnabled, permissions, newPassword } = req.body;
+    const { name, role, status, phone, avatarUrl, twoFactorEnabled, permissions, newPassword } = req.body;
     if (db.users[idx].id === 'usr-1' && status && status !== 'active') {
       res.status(400).json({ error: 'Não é permitido bloquear a conta Administrador Master principal.' });
       return;
+    }
+    const avatarCheck = validateAvatarInput(avatarUrl);
+    if (!avatarCheck.valid) {
+      res.status(400).json({ error: avatarCheck.error });
+      return;
+    }
+    if (newPassword && typeof newPassword === 'string' && newPassword.trim().length > 0) {
+      if (db.settings.enforceStrongPassword && !isStrongPassword(newPassword)) {
+        res.status(400).json({
+          error: 'Política de Senha Forte: a nova senha deve ter no mínimo 8 caracteres, maiúscula, minúscula, número e símbolo.',
+        });
+        return;
+      }
+      credentials[db.users[idx].id] = hashPassword(newPassword);
+      saveCredentials(credentials);
     }
     const updatedRole: Role = role || db.users[idx].role;
     db.users[idx] = {
@@ -2030,13 +2677,10 @@ async function startServer() {
       role: updatedRole,
       status: status || db.users[idx].status,
       phone: phone !== undefined ? phone : db.users[idx].phone,
+      avatarUrl: avatarCheck.sanitized !== undefined ? avatarCheck.sanitized : db.users[idx].avatarUrl,
       twoFactorEnabled: twoFactorEnabled !== undefined ? Boolean(twoFactorEnabled) : db.users[idx].twoFactorEnabled,
       permissions: Array.isArray(permissions) ? permissions : db.users[idx].permissions,
     };
-    if (newPassword && typeof newPassword === 'string' && newPassword.length >= 6) {
-      credentials[db.users[idx].id] = hashPassword(newPassword);
-      saveCredentials(credentials);
-    }
     saveDb(db);
     logAudit(req.user!, 'USER_PERMISSIONS_UPDATED', 'users', `Permissões/cadastro do usuário '${db.users[idx].name}' (${db.users[idx].role}) atualizados.`, 'warning', db.users[idx].id, req);
     res.json(db.users[idx]);
@@ -2098,7 +2742,7 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // --- SETTINGS & SECURITY ---
+  // --- SETTINGS, SECURITY & BACKUP/RECOVERY ---
   app.put('/api/settings', requireAuth, requireModulePermission('settings', ['admin']), (req: AuthenticatedRequest, res: Response) => {
     db.settings = {
       ...db.settings,
@@ -2110,7 +2754,6 @@ async function startServer() {
   });
 
   app.post('/api/security/test-rbac', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    // Endpoint that allows any logged-in user to test if backend blocks admin-only action
     if (req.user!.role !== 'admin') {
       logAudit(
         req.user!,
@@ -2128,6 +2771,709 @@ async function startServer() {
     }
     logAudit(req.user!, 'SECURITY_AUDIT_VERIFIED', 'security', 'Verificação de integridade de segurança executada pelo Administrador.', 'info', undefined, req);
     res.json({ message: 'Acesso administrativo verificado com sucesso pelo servidor.' });
+  });
+
+  app.get('/api/security/readiness', requireAuth, requireModulePermission('security', ['admin']), (_req: AuthenticatedRequest, res: Response) => {
+    const demoUsersStillActive = db.users
+      .filter((u) => DEMO_DEFAULT_PASSWORDS[u.id] && credentials[u.id] === hashPassword(DEMO_DEFAULT_PASSWORDS[u.id]))
+      .map((u) => u.email);
+
+    const hasCustomSessionSecret = Boolean(
+      process.env.SESSION_SECRET &&
+        process.env.SESSION_SECRET !== DEFAULT_FALLBACK_SECRET &&
+        process.env.SESSION_SECRET.length >= 32
+    );
+
+    const backups = fs.existsSync(BACKUP_DIR)
+      ? fs.readdirSync(BACKUP_DIR).filter((f) => f.endsWith('.json')).sort().reverse()
+      : [];
+
+    res.json({
+      readyForProduction: demoUsersStillActive.length === 0 && hasCustomSessionSecret,
+      hasCustomSessionSecret,
+      demoAccountsWithDefaultPassword: demoUsersStillActive,
+      disableDemoAccountsEnv: process.env.DISABLE_DEMO_ACCOUNTS === 'true',
+      hasAutomaticBackupFile: fs.existsSync(DB_BAK_PATH),
+      snapshots: backups,
+    });
+  });
+
+  app.post('/api/security/backup', requireAuth, requireModulePermission('security', ['admin']), (req: AuthenticatedRequest, res: Response) => {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `snapshot_${stamp}.json`;
+    const target = path.join(BACKUP_DIR, filename);
+    const payload = {
+      createdAt: new Date().toISOString(),
+      createdBy: req.user!.email,
+      checksumSha256: crypto.createHash('sha256').update(JSON.stringify(db)).digest('hex'),
+      db,
+    };
+    fs.writeFileSync(target, JSON.stringify(payload, null, 2), { encoding: 'utf8', mode: 0o600 });
+    logAudit(req.user!, 'BACKUP_CREATED', 'security', `Snapshot de segurança '${filename}' gerado (SHA-256: ${payload.checksumSha256.slice(0, 12)}...).`, 'info', filename, req);
+    res.status(201).json({ filename, createdAt: payload.createdAt, checksumSha256: payload.checksumSha256 });
+  });
+
+  app.post('/api/security/restore', requireAuth, requireModulePermission('security', ['admin']), (req: AuthenticatedRequest, res: Response) => {
+    const { filename } = req.body;
+    if (!filename || typeof filename !== 'string' || filename.includes('..') || filename.includes('/')) {
+      res.status(400).json({ error: 'Nome de arquivo de snapshot inválido.' });
+      return;
+    }
+    const sourcePath = path.join(BACKUP_DIR, filename);
+    if (!fs.existsSync(sourcePath)) {
+      res.status(404).json({ error: 'Snapshot de backup não encontrado.' });
+      return;
+    }
+    try {
+      const parsed = JSON.parse(fs.readFileSync(sourcePath, 'utf8'));
+      const restoredDb: AppDatabase = parsed.db || parsed;
+      if (!restoredDb.users || !restoredDb.clients || !restoredDb.sales) {
+        res.status(400).json({ error: 'Estrutura de backup corrompida ou incompatível.' });
+        return;
+      }
+      const computedHash = crypto.createHash('sha256').update(JSON.stringify(restoredDb)).digest('hex');
+      if (parsed.checksumSha256 && parsed.checksumSha256 !== computedHash) {
+        res.status(400).json({ error: 'Falha de integridade: checksum SHA-256 do backup não confere.' });
+        return;
+      }
+      Object.assign(db, restoredDb);
+      saveDb(db);
+      logAudit(req.user!, 'BACKUP_RESTORED', 'security', `Banco de dados restaurado com sucesso a partir do snapshot '${filename}'.`, 'critical', filename, req);
+      res.json({ success: true, filename, checksumSha256: computedHash });
+    } catch {
+      res.status(500).json({ error: 'Erro ao processar arquivo de restauração.' });
+    }
+  });
+
+  // ==========================================================================
+  // CLIENT PORTAL ROUTES (SEPARATED FROM ADM, CLIENT-SCOPED & VALIDATED)
+  // ==========================================================================
+  function requireClientAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      res.status(401).json({ error: 'Sessão de cliente não autenticada. Entre na sua conta para continuar.' });
+      return;
+    }
+    const token = authHeader.slice(7);
+    const payload = verifyToken(token);
+    if (!payload || payload.role !== 'client') {
+      res.status(401).json({ error: 'Token de sessão inválido ou expirado.' });
+      return;
+    }
+    const client = db.clients.find((c) => c.id === payload.userId);
+    if (!client || client.status !== 'active') {
+      res.status(403).json({ error: 'Cadastro de cliente inativo.' });
+      return;
+    }
+    req.client = client;
+    next();
+  }
+
+  // Public Catalog & Banners for Client Portal
+  app.get('/api/public/catalog', (_req: Request, res: Response) => {
+    const activeBanners = (db.settings.banners || DEFAULT_CLIENT_BANNERS)
+      .filter((b) => b.active)
+      .sort((a, b) => a.order - b.order);
+
+    res.json({
+      salon: {
+        salonName: db.settings.salonName,
+        phone: db.settings.phone,
+        whatsapp: db.settings.whatsapp,
+        email: db.settings.email,
+        address: db.settings.address,
+        city: db.settings.city,
+        state: db.settings.state,
+        openingTime: db.settings.openingTime,
+        closingTime: db.settings.closingTime,
+        slotIntervalMinutes: db.settings.slotIntervalMinutes || 30,
+        allowOnlineBooking: db.settings.allowOnlineBooking,
+        cancellationNoticeHours: db.settings.cancellationNoticeHours ?? 4,
+      },
+      banners: activeBanners,
+      services: db.services.filter((s) => s.status === 'active'),
+      professionals: db.professionals
+        .filter((p) => p.status === 'active')
+        .map((p) => ({
+          id: p.id,
+          name: p.name,
+          specialty: p.specialty,
+          workDays: p.workDays,
+          workHours: p.workHours,
+          rating: p.rating,
+          bio: p.bio,
+        })),
+    });
+  });
+
+  // Real Slot Availability Engine (Computed from Professional workHours, workDays, and non-cancelled Appointments)
+  app.get('/api/public/availability', (req: Request, res: Response) => {
+    const { date, professionalId, serviceId, excludeAppointmentId } = req.query as Record<string, string>;
+    if (!date || !professionalId || !serviceId) {
+      res.status(400).json({ error: 'Informe data, especialista e serviço para consultar horários.' });
+      return;
+    }
+    const prof = db.professionals.find((p) => p.id === professionalId && p.status === 'active');
+    const srv = db.services.find((s) => s.id === serviceId && s.status === 'active');
+    if (!prof || !srv) {
+      res.status(404).json({ error: 'Especialista ou serviço indisponível.' });
+      return;
+    }
+
+    // Parse date weekday in local representation
+    const [yy, mm, dd] = date.split('-').map(Number);
+    const dateObj = new Date(yy, (mm || 1) - 1, dd || 1);
+    const dayLabel = WEEKDAY_MAP[dateObj.getDay()];
+
+    if (Array.isArray(prof.workDays) && prof.workDays.length > 0 && !prof.workDays.includes(dayLabel)) {
+      res.json({
+        date,
+        dayLabel,
+        isWorkingDay: false,
+        reason: `${prof.name} não atende às/aos ${dayLabel}s (Dias de atendimento: ${prof.workDays.join(', ')}).`,
+        availableSlots: [],
+        occupiedIntervals: [],
+      });
+      return;
+    }
+
+    // Parse workHours e.g. "09:00 às 19:00"
+    const match = (prof.workHours || '').match(/(\d{2}:\d{2}).*?(\d{2}:\d{2})/);
+    const openTime = match ? match[1] : db.settings.openingTime || '09:00';
+    const closeTime = match ? match[2] : db.settings.closingTime || '20:00';
+    const startWindow = timeToMinutes(openTime);
+    const endWindow = timeToMinutes(closeTime);
+    const step = Math.max(15, Number(db.settings.slotIntervalMinutes || 30));
+    const duration = srv.durationMinutes;
+
+    const dayAppointments = db.appointments.filter(
+      (a) =>
+        a.professionalId === prof.id &&
+        a.date === date &&
+        a.status !== 'cancelled' &&
+        a.id !== excludeAppointmentId
+    );
+
+    const availableSlots: { startTime: string; endTime: string }[] = [];
+    for (let t = startWindow; t + duration <= endWindow; t += step) {
+      const candidateStart = t;
+      const candidateEnd = t + duration;
+      const hasOverlap = dayAppointments.some((a) => {
+        const exStart = timeToMinutes(a.startTime);
+        const exEnd = timeToMinutes(a.endTime);
+        return candidateStart < exEnd && candidateEnd > exStart;
+      });
+      if (!hasOverlap) {
+        const sh = String(Math.floor(candidateStart / 60)).padStart(2, '0');
+        const sm = String(candidateStart % 60).padStart(2, '0');
+        const eh = String(Math.floor(candidateEnd / 60)).padStart(2, '0');
+        const em = String(candidateEnd % 60).padStart(2, '0');
+        availableSlots.push({ startTime: `${sh}:${sm}`, endTime: `${eh}:${em}` });
+      }
+    }
+
+    res.json({
+      date,
+      dayLabel,
+      isWorkingDay: true,
+      availableSlots,
+      occupiedIntervals: dayAppointments.map((a) => ({
+        startTime: a.startTime,
+        endTime: a.endTime,
+      })),
+    });
+  });
+
+  // Client Registration
+  app.post('/api/client-auth/register', (req: Request, res: Response) => {
+    const { name, email, phone, cpf, birthDate, password, allergies, notes } = req.body;
+    if (!name || typeof name !== 'string' || name.trim().length < 3) {
+      res.status(400).json({ error: 'Informe seu nome completo (mínimo 3 caracteres).' });
+      return;
+    }
+    if (!email || typeof email !== 'string' || !email.includes('@')) {
+      res.status(400).json({ error: 'Informe um e-mail válido.' });
+      return;
+    }
+    if (!phone || typeof phone !== 'string' || phone.trim().length < 8) {
+      res.status(400).json({ error: 'Informe seu WhatsApp/telefone com DDD.' });
+      return;
+    }
+    if (!password || typeof password !== 'string' || password.length < 6) {
+      res.status(400).json({ error: 'Crie uma senha com pelo menos 6 caracteres.' });
+      return;
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    let client = db.clients.find((c) => c.email.toLowerCase() === normalizedEmail);
+    if (client && credentials[client.id]) {
+      res.status(409).json({ error: 'Já existe uma conta cadastrada com este e-mail. Faça login ou recupere sua senha.' });
+      return;
+    }
+
+    if (!client) {
+      client = {
+        id: `cli-${Date.now()}`,
+        name: name.trim(),
+        email: normalizedEmail,
+        phone: phone.trim(),
+        cpf: (cpf || '').trim(),
+        birthDate: birthDate || '1995-01-01',
+        tier: 'Standard',
+        totalSpent: 0,
+        visitsCount: 0,
+        lastVisit: '-',
+        notes: (notes || '').trim(),
+        allergies: (allergies || 'Nenhuma relatada').trim(),
+        status: 'active',
+        createdAt: new Date().toISOString(),
+      };
+      db.clients.unshift(client);
+    } else {
+      client.name = name.trim();
+      client.phone = phone.trim();
+      if (cpf) client.cpf = cpf.trim();
+      if (birthDate) client.birthDate = birthDate;
+      if (allergies) client.allergies = allergies.trim();
+    }
+
+    credentials[client.id] = hashPassword(password);
+    saveDb(db);
+    saveCredentials(credentials);
+
+    const token = signToken({
+      userId: client.id,
+      email: client.email,
+      role: 'client',
+      exp: Date.now() + 1000 * 60 * 60 * 24,
+    });
+
+    res.status(201).json({ token, client });
+  });
+
+  // Client Login
+  app.post('/api/client-auth/login', (req: Request, res: Response) => {
+    const { email, password } = req.body;
+    if (!email || !password || typeof email !== 'string' || typeof password !== 'string') {
+      res.status(400).json({ error: 'Informe seu e-mail e senha.' });
+      return;
+    }
+    const normalizedEmail = email.trim().toLowerCase();
+    const client = db.clients.find((c) => c.email.toLowerCase() === normalizedEmail);
+    if (!client) {
+      res.status(401).json({ error: 'E-mail ou senha incorretos.' });
+      return;
+    }
+    if (client.status !== 'active') {
+      res.status(403).json({ error: 'Seu cadastro encontra-se inativo. Contate a recepção do salão.' });
+      return;
+    }
+    const expectedHash = credentials[client.id];
+    const providedHash = hashPassword(password);
+    if (!expectedHash || expectedHash !== providedHash) {
+      res.status(401).json({ error: 'E-mail ou senha incorretos.' });
+      return;
+    }
+
+    const token = signToken({
+      userId: client.id,
+      email: client.email,
+      role: 'client',
+      exp: Date.now() + 1000 * 60 * 60 * 24,
+    });
+
+    res.json({ token, client });
+  });
+
+  // Client Password Recovery (Verifies email + phone digits or CPF digits)
+  app.post('/api/client-auth/recover', (req: Request, res: Response) => {
+    const { email, verificationValue, newPassword } = req.body;
+    if (!email || !verificationValue || !newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
+      res.status(400).json({
+        error: 'Informe seu e-mail, telefone/CPF cadastrado e uma nova senha de pelo menos 6 caracteres.',
+      });
+      return;
+    }
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const client = db.clients.find((c) => c.email.toLowerCase() === normalizedEmail);
+    if (!client) {
+      res.status(404).json({ error: 'Nenhuma conta localizada para os dados informados.' });
+      return;
+    }
+
+    const cleanInput = String(verificationValue).replace(/\D/g, '');
+    const cleanPhone = (client.phone || '').replace(/\D/g, '');
+    const cleanCpf = (client.cpf || '').replace(/\D/g, '');
+
+    const matchesPhone = cleanInput.length >= 4 && cleanPhone.endsWith(cleanInput.slice(-4));
+    const matchesCpf = cleanInput.length >= 4 && cleanCpf.startsWith(cleanInput.slice(0, 4));
+
+    if (!matchesPhone && !matchesCpf) {
+      res.status(400).json({
+        error: 'Os dígitos de verificação (Telefone ou CPF) não conferem com o cadastro.',
+      });
+      return;
+    }
+
+    credentials[client.id] = hashPassword(newPassword);
+    saveCredentials(credentials);
+
+    res.json({
+      success: true,
+      message: 'Sua senha foi redefinida com sucesso. Você já pode acessar sua conta.',
+    });
+  });
+
+  // Authenticated Client Portal Data (Strictly scoped to req.client.id)
+  app.get('/api/client-portal/me', requireClientAuth, (req: AuthenticatedRequest, res: Response) => {
+    const client = req.client!;
+    const myAppointments = db.appointments
+      .filter((a) => a.clientId === client.id)
+      .sort((a, b) => `${b.date}T${b.startTime}`.localeCompare(`${a.date}T${a.startTime}`));
+
+    const myWaitlist = (db.waitlist || [])
+      .filter((w) => w.clientId === client.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+    res.json({
+      client,
+      appointments: myAppointments,
+      waitlist: myWaitlist,
+    });
+  });
+
+  // Client Profile Update (Strictly scoped to authenticated client)
+  app.put('/api/client-portal/profile', requireClientAuth, (req: AuthenticatedRequest, res: Response) => {
+    const client = req.client!;
+    const { id, clientId, targetClientId, name, phone, cpf, birthDate, allergies, notes, avatarUrl, newPassword } = req.body;
+
+    const requestedTargetId = id || clientId || targetClientId;
+    if (requestedTargetId && requestedTargetId !== client.id) {
+      res.status(403).json({
+        error: 'Acesso negado: você não possui autorização para alterar o perfil de outro usuário.',
+      });
+      return;
+    }
+
+    if (!name || String(name).trim().length < 3 || !phone || String(phone).trim().length < 8) {
+      res.status(400).json({ error: 'Nome completo e telefone válido são obrigatórios.' });
+      return;
+    }
+
+    const avatarCheck = validateAvatarInput(avatarUrl);
+    if (!avatarCheck.valid) {
+      res.status(400).json({ error: avatarCheck.error });
+      return;
+    }
+
+    client.name = String(name).trim();
+    client.phone = String(phone).trim();
+    if (cpf !== undefined) client.cpf = String(cpf).trim();
+    if (birthDate !== undefined) client.birthDate = String(birthDate);
+    if (allergies !== undefined) client.allergies = String(allergies).trim();
+    if (notes !== undefined) client.notes = String(notes).trim();
+    if (avatarCheck.sanitized !== undefined) {
+      client.avatarUrl = avatarCheck.sanitized;
+    }
+
+    if (newPassword && typeof newPassword === 'string' && newPassword.trim().length > 0) {
+      if (newPassword.length < 6) {
+        res.status(400).json({ error: 'A nova senha deve ter pelo menos 6 caracteres.' });
+        return;
+      }
+      credentials[client.id] = hashPassword(newPassword);
+      saveCredentials(credentials);
+    }
+
+    saveDb(db);
+    res.json({ client });
+  });
+
+  // Client Create Appointment
+  app.post('/api/client-portal/appointments', requireClientAuth, (req: AuthenticatedRequest, res: Response) => {
+    const client = req.client!;
+    if (!db.settings.allowOnlineBooking) {
+      res.status(403).json({ error: 'O agendamento online está temporariamente pausado pelo salão.' });
+      return;
+    }
+    const { professionalId, serviceId, date, startTime, notes, referencePhotos } = req.body;
+    const prof = db.professionals.find((p) => p.id === professionalId && p.status === 'active');
+    const srv = db.services.find((s) => s.id === serviceId && s.status === 'active');
+
+    if (!prof || !srv || !date || !startTime) {
+      res.status(400).json({ error: 'Selecione serviço, especialista, data e horário disponíveis.' });
+      return;
+    }
+
+    const photosCheck = validateReferencePhotosInput(referencePhotos);
+    if (!photosCheck.valid) {
+      res.status(400).json({ error: photosCheck.error });
+      return;
+    }
+
+    const [hh, mm] = String(startTime).split(':').map(Number);
+    if (isNaN(hh) || isNaN(mm)) {
+      res.status(400).json({ error: 'Horário inválido.' });
+      return;
+    }
+    const newStartMin = hh * 60 + mm;
+    const newEndMin = newStartMin + srv.durationMinutes;
+    const endH = String(Math.floor(newEndMin / 60) % 24).padStart(2, '0');
+    const endM = String(newEndMin % 60).padStart(2, '0');
+    const endTime = `${endH}:${endM}`;
+
+    // Verify workDay
+    const [yy, mo, dd] = String(date).split('-').map(Number);
+    const dateObj = new Date(yy, (mo || 1) - 1, dd || 1);
+    const dayLabel = WEEKDAY_MAP[dateObj.getDay()];
+    if (Array.isArray(prof.workDays) && prof.workDays.length > 0 && !prof.workDays.includes(dayLabel)) {
+      res.status(400).json({
+        error: `${prof.name} não realiza atendimentos às/aos ${dayLabel}s.`,
+      });
+      return;
+    }
+
+    // Verify overlap conflict
+    const conflict = db.appointments.find((a) => {
+      if (a.professionalId !== prof.id || a.date !== date || a.status === 'cancelled') return false;
+      const exStart = timeToMinutes(a.startTime);
+      const exEnd = timeToMinutes(a.endTime);
+      return newStartMin < exEnd && newEndMin > existEndOrStart(exStart);
+    });
+
+    function existEndOrStart(v: number) {
+      return v;
+    }
+
+    if (conflict) {
+      res.status(409).json({
+        error: `Este horário (${startTime}) acabou de ser preenchido na agenda de ${prof.name}. Escolha outro horário ou entre na Fila de Espera.`,
+      });
+      return;
+    }
+
+    const apt = {
+      id: `apt-${Date.now()}`,
+      clientId: client.id,
+      clientName: client.name,
+      clientPhone: client.phone,
+      professionalId: prof.id,
+      professionalName: prof.name,
+      serviceId: srv.id,
+      serviceName: srv.name,
+      date,
+      startTime,
+      endTime,
+      price: srv.price,
+      status: 'confirmed' as const,
+      paymentStatus: 'pending' as const,
+      notes: (notes || '').trim(),
+      referencePhotos: photosCheck.sanitized || [],
+      createdAt: new Date().toISOString(),
+    };
+
+    db.appointments.unshift(apt);
+    addNotification(
+      `Novo Agendamento Online: ${client.name}`,
+      `${client.name} agendou ${srv.name} com ${prof.name} para ${date} às ${startTime}.`,
+      'agenda',
+      'agenda'
+    );
+    saveDb(db);
+    res.status(201).json(apt);
+  });
+
+  // Client Attach/Update Reference Photos on Own Appointment
+  app.put('/api/client-portal/appointments/:id/reference-photos', requireClientAuth, (req: AuthenticatedRequest, res: Response) => {
+    const client = req.client!;
+    const apt = db.appointments.find((a) => a.id === req.params.id);
+    if (!apt) {
+      res.status(404).json({ error: 'Agendamento não encontrado.' });
+      return;
+    }
+    if (apt.clientId !== client.id) {
+      res.status(403).json({ error: 'Acesso negado: você só pode enviar fotos de referência para seus próprios agendamentos.' });
+      return;
+    }
+    const photosCheck = validateReferencePhotosInput(req.body.referencePhotos);
+    if (!photosCheck.valid) {
+      res.status(400).json({ error: photosCheck.error });
+      return;
+    }
+    apt.referencePhotos = photosCheck.sanitized || [];
+    saveDb(db);
+    res.json(apt);
+  });
+
+  // Helper to check salon cancellation/reschedule window rule
+  function checkAppointmentModificationRule(apt: { date: string; startTime: string; status: string }): string | null {
+    if (apt.status === 'completed' || apt.status === 'cancelled' || apt.status === 'in_progress') {
+      return 'Este agendamento já foi concluído, cancelado ou está em atendimento.';
+    }
+    const minHours = Number(db.settings.cancellationNoticeHours ?? 4);
+    const aptTimestamp = new Date(`${apt.date}T${apt.startTime}:00`).getTime();
+    const nowTimestamp = Date.now();
+    const diffHours = (aptTimestamp - nowTimestamp) / (1000 * 60 * 60);
+    if (diffHours >= 0 && diffHours < minHours) {
+      return `Conforme política do salão, cancelamentos ou reagendamentos exigem antecedência mínima de ${minHours} horas. Entre em contato com a recepção pelo WhatsApp ${db.settings.whatsapp}.`;
+    }
+    return null;
+  }
+
+  // Client Cancel Own Appointment
+  app.post('/api/client-portal/appointments/:id/cancel', requireClientAuth, (req: AuthenticatedRequest, res: Response) => {
+    const client = req.client!;
+    const apt = db.appointments.find((a) => a.id === req.params.id);
+    if (!apt) {
+      res.status(404).json({ error: 'Agendamento não encontrado.' });
+      return;
+    }
+    if (apt.clientId !== client.id) {
+      res.status(403).json({ error: 'Acesso negado: você só pode gerenciar seus próprios agendamentos.' });
+      return;
+    }
+
+    const ruleError = checkAppointmentModificationRule(apt);
+    if (ruleError) {
+      res.status(400).json({ error: ruleError });
+      return;
+    }
+
+    apt.status = 'cancelled';
+    addNotification(
+      `Cancelamento Online: ${client.name}`,
+      `A cliente ${client.name} cancelou o horário de ${apt.serviceName} (${apt.date} às ${apt.startTime}).`,
+      'agenda',
+      'agenda'
+    );
+    saveDb(db);
+    res.json(apt);
+  });
+
+  // Client Reschedule Own Appointment
+  app.post('/api/client-portal/appointments/:id/reschedule', requireClientAuth, (req: AuthenticatedRequest, res: Response) => {
+    const client = req.client!;
+    const apt = db.appointments.find((a) => a.id === req.params.id);
+    if (!apt) {
+      res.status(404).json({ error: 'Agendamento não encontrado.' });
+      return;
+    }
+    if (apt.clientId !== client.id) {
+      res.status(403).json({ error: 'Acesso negado: você só pode reagendar seus próprios horários.' });
+      return;
+    }
+
+    const ruleError = checkAppointmentModificationRule(apt);
+    if (ruleError) {
+      res.status(400).json({ error: ruleError });
+      return;
+    }
+
+    const { date, startTime, professionalId } = req.body;
+    if (!date || !startTime) {
+      res.status(400).json({ error: 'Informe a nova data e horário para reagendamento.' });
+      return;
+    }
+
+    const targetProfId = professionalId || apt.professionalId;
+    const prof = db.professionals.find((p) => p.id === targetProfId && p.status === 'active');
+    const srv = db.services.find((s) => s.id === apt.serviceId);
+    if (!prof || !srv) {
+      res.status(400).json({ error: 'Especialista ou serviço inválido.' });
+      return;
+    }
+
+    const newStartMin = timeToMinutes(startTime);
+    const newEndMin = newStartMin + srv.durationMinutes;
+    const endH = String(Math.floor(newEndMin / 60) % 24).padStart(2, '0');
+    const endM = String(newEndMin % 60).padStart(2, '0');
+    const endTime = `${endH}:${endM}`;
+
+    const conflict = db.appointments.find((a) => {
+      if (a.id === apt.id || a.professionalId !== prof.id || a.date !== date || a.status === 'cancelled') return false;
+      const exStart = timeToMinutes(a.startTime);
+      const exEnd = timeToMinutes(a.endTime);
+      return newStartMin < exEnd && newEndMin > exStart;
+    });
+    if (conflict) {
+      res.status(409).json({
+        error: `Horário indisponível: ${prof.name} já possui atendimento das ${conflict.startTime} às ${conflict.endTime}.`,
+      });
+      return;
+    }
+
+    apt.date = date;
+    apt.startTime = startTime;
+    apt.endTime = endTime;
+    apt.professionalId = prof.id;
+    apt.professionalName = prof.name;
+    apt.status = 'confirmed';
+
+    addNotification(
+      `Reagendamento Online: ${client.name}`,
+      `${client.name} reagendou ${apt.serviceName} para ${date} às ${startTime} com ${prof.name}.`,
+      'agenda',
+      'agenda'
+    );
+    saveDb(db);
+    res.json(apt);
+  });
+
+  // Client Waitlist Request
+  app.post('/api/client-portal/waitlist', requireClientAuth, (req: AuthenticatedRequest, res: Response) => {
+    const client = req.client!;
+    const { serviceId, professionalId, desiredDate, preferredPeriod, notes } = req.body;
+    const srv = db.services.find((s) => s.id === serviceId);
+    const prof = db.professionals.find((p) => p.id === professionalId);
+    if (!srv || !desiredDate) {
+      res.status(400).json({ error: 'Selecione o serviço e a data desejada para a fila de espera.' });
+      return;
+    }
+
+    const entry: WaitlistEntry = {
+      id: `wlt-${Date.now()}`,
+      clientId: client.id,
+      clientName: client.name,
+      clientPhone: client.phone,
+      serviceId: srv.id,
+      serviceName: srv.name,
+      professionalId: prof ? prof.id : 'any',
+      professionalName: prof ? prof.name : 'Qualquer Especialista',
+      desiredDate,
+      preferredPeriod: preferredPeriod || 'Qualquer Horário',
+      notes: (notes || '').trim(),
+      status: 'waiting',
+      createdAt: new Date().toISOString(),
+    };
+
+    if (!Array.isArray(db.waitlist)) db.waitlist = [];
+    db.waitlist.unshift(entry);
+
+    addNotification(
+      `Nova Solicitação na Fila de Espera`,
+      `${client.name} solicitou vaga para ${srv.name} em ${desiredDate} (${entry.preferredPeriod}).`,
+      'agenda',
+      'agenda'
+    );
+    saveDb(db);
+    res.status(201).json(entry);
+  });
+
+  app.delete('/api/client-portal/waitlist/:id', requireClientAuth, (req: AuthenticatedRequest, res: Response) => {
+    const client = req.client!;
+    if (!Array.isArray(db.waitlist)) db.waitlist = [];
+    const idx = db.waitlist.findIndex((w) => w.id === req.params.id);
+    if (idx === -1) {
+      res.status(404).json({ error: 'Solicitação de fila de espera não encontrada.' });
+      return;
+    }
+    if (db.waitlist[idx].clientId !== client.id) {
+      res.status(403).json({ error: 'Acesso negado: você só pode remover suas próprias solicitações.' });
+      return;
+    }
+    db.waitlist[idx].status = 'cancelled';
+    saveDb(db);
+    res.json({ success: true });
   });
 
   // Vite middleware in dev / static in prod

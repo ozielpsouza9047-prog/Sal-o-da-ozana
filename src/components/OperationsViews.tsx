@@ -760,6 +760,59 @@ export const AgendaModule: React.FC<ModuleProps> = ({
         </div>
       )}
 
+      {/* Client Portal Waitlist Requests */}
+      {db.waitlist && db.waitlist.filter((w) => w.status === 'waiting').length > 0 && (
+        <div className="bg-white border border-zinc-200/80 rounded-xl p-6 space-y-4">
+          <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
+            <div>
+              <h2 className="text-sm font-semibold text-zinc-900">
+                Fila de Espera — Solicitações do Portal da Cliente (
+                {db.waitlist.filter((w) => w.status === 'waiting').length})
+              </h2>
+              <p className="text-xs text-zinc-500">
+                Clientes aguardando liberação de encaixe ou desistência de horário
+              </p>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-zinc-200 text-[11px] font-semibold text-zinc-500">
+                  <th className="py-2.5 pr-4">Data Desejada & Período</th>
+                  <th className="py-2.5 px-4">Cliente</th>
+                  <th className="py-2.5 px-4">Serviço</th>
+                  <th className="py-2.5 px-4">Especialista</th>
+                  <th className="py-2.5 pl-4">Observações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100 text-xs">
+                {db.waitlist
+                  .filter((w) => w.status === 'waiting')
+                  .map((w) => (
+                    <tr key={w.id} className="hover:bg-zinc-50/70">
+                      <td className="py-3 pr-4 font-mono-num whitespace-nowrap">
+                        <span className="font-semibold text-zinc-900">
+                          {formatDateBR(w.desiredDate)}
+                        </span>
+                        <span className="text-zinc-300 mx-1.5">·</span>
+                        <span className="text-amber-800 font-medium">{w.preferredPeriod}</span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className="font-semibold text-zinc-900">{w.clientName}</span>
+                        <span className="text-zinc-300 mx-1.5">·</span>
+                        <span className="font-mono-num text-zinc-500">{w.clientPhone}</span>
+                      </td>
+                      <td className="py-3 px-4 font-medium text-zinc-800">{w.serviceName}</td>
+                      <td className="py-3 px-4 text-zinc-700">{w.professionalName}</td>
+                      <td className="py-3 pl-4 text-zinc-500">{w.notes || '—'}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Modal Create/Edit Appointment */}
       <Modal
         isOpen={isModalOpen}
