@@ -1,0 +1,6 @@
+{
+  "name": "Lumina Atelier — Sistema de Gestão para Salão de Beleza",
+  "description": "Sistema profissional de gestão completa para salões de beleza, estética e bem-estar com controle de agenda, clientes, estoque, vendas, fluxo de caixa, comissões e segurança RBAC.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
